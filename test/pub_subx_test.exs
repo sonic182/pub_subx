@@ -41,6 +41,12 @@ defmodule PubSubxTest do
   end
 
   test "topics" do
+    PubSubx.subscribe(:foo, self())
+    PubSubx.subscribe(:bar, self())
+    assert MapSet.new(PubSubx.topics()) == MapSet.new([:foo, :bar])
+  end
+
+  test "topics with independent pubsubx" do
     start_supervised!({PubSubx, [name: TopicsPubSubx]})
 
     PubSubx.subscribe(:foo, self(), TopicsPubSubx)
