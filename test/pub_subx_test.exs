@@ -41,7 +41,7 @@ defmodule PubSubxTest do
   end
 
   test "topics" do
-    start_link_supervised!({PubSubx, [name: TopicsPubSubx]})
+    start_supervised!({PubSubx, [name: TopicsPubSubx]})
 
     PubSubx.subscribe(:foo, self(), TopicsPubSubx)
     PubSubx.subscribe(:bar, self(), TopicsPubSubx)
