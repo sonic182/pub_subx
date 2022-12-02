@@ -5,10 +5,16 @@ defmodule PubSubx do
 
   use GenServer
 
+  @type topic :: atom | binary
+  @type process :: atom | pid
+
+  @spec start_link(Keyword.t()) :: GenServer.on_start()
   def start_link(opts \\ []) do
     GenServer.start_link(__MODULE__, opts, name: get_name(opts))
   end
 
+  @impl true
+  @spec init(Keyword.t()) :: {:ok, map()}
   def init(opts) do
     state = %{
       registry: get_registry(get_name(opts))
@@ -17,41 +23,33 @@ defmodule PubSubx do
     {:ok, state}
   end
 
-  defp get_registry(name) do
-    registry_name = String.to_atom("PubSubx.Registry.#{name}")
-
-    {:ok, _registry} =
-      Registry.start_link(
-        keys: :duplicate,
-        name: registry_name,
-        partitions: System.schedulers_online()
-      )
-
-    registry_name
-  end
-
-  defp get_name(opts), do: Keyword.get(opts, :name, __MODULE__)
-
+  @spec subscribe(topic, process, process) :: :ok
   def subscribe(topic, pid, name \\ __MODULE__) do
     GenServer.call(name, {:subscribe, {topic, pid}})
   end
 
+  @spec subscribers(topic, process) :: [pid]
   def subscribers(topic, name \\ __MODULE__) do
     GenServer.call(name, {:subscribers, topic})
   end
 
+  @spec topics(process) :: [topic]
   def topics(name \\ __MODULE__) do
     GenServer.call(name, :topics)
   end
 
+  @spec publish(topic, term(), process) :: :ok
   def publish(topic, message, name \\ __MODULE__) do
     GenServer.cast(name, {:publish, {topic, message}})
   end
 
+  @spec unsubscribe(topic, process, process) :: :ok
   def unsubscribe(topic, pid, name \\ __MODULE__) do
     GenServer.call(name, {:unsubscribe, {topic, pid}})
   end
 
+  @impl true
+  @spec handle_cast(term(), map()) :: {:noreply, map()}
   def handle_cast({:publish, {topic, message}}, state) do
     Registry.dispatch(state.registry, topic, fn entries ->
       for {_self, [target: target]} <- entries, do: send(target, message)
@@ -60,6 +58,8 @@ defmodule PubSubx do
     {:noreply, state}
   end
 
+  @impl true
+  @spec handle_call(term(), {pid(), atom}, map()) :: {:reply, term(), map()}
   def handle_call({:subscribe, {topic, pid}}, _from, state) do
     process = get_process(pid)
     {:ok, _} = Registry.register(state.registry, topic, target: process)
@@ -86,6 +86,24 @@ defmodule PubSubx do
     {:reply, subscribers, state}
   end
 
+  @spec get_process(process) :: pid
   defp get_process(pid) when is_atom(pid), do: Process.whereis(pid)
   defp get_process(pid), do: pid
+
+  @spec get_registry(atom | binary) :: atom
+  defp get_registry(name) do
+    registry_name = String.to_atom("PubSubx.Registry.#{name}")
+
+    {:ok, _registry} =
+      Registry.start_link(
+        keys: :duplicate,
+        name: registry_name,
+        partitions: System.schedulers_online()
+      )
+
+    registry_name
+  end
+
+  @spec get_name(Keyword.t()) :: atom
+  defp get_name(opts), do: Keyword.get(opts, :name, __MODULE__)
 end
