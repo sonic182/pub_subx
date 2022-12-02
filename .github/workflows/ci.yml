@@ -4,7 +4,10 @@ on: [push, pull_request]
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    name: OTP ${{matrix.otp}} / Elixir ${{matrix.elixir}}
+    runs-on: ubuntu-20.04
+    env:
+      MIX_ENV: test
     strategy:
       matrix:
         elixir: [ 1.11.0, 1.12.0, 1.13.0 ]
@@ -12,8 +15,9 @@ jobs:
         exclude:
           - elixir: 1.11.0
             otp: 24.0.0
+
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v2
 
       - name: Setup elixir
         uses: erlef/setup-beam@v1
@@ -21,41 +25,46 @@ jobs:
           otp-version: ${{ matrix.otp }}
           elixir-version: ${{ matrix.elixir }}
 
-      - name: Retrieve Mix Dependencies Cache
+      - name: Cache
         uses: actions/cache@v3
-        id: mix-cache #id to use in retrieve action
+        id: cache #id to use in retrieve action
         with:
-          path: deps
-          key: ${{ runner.os }}-${{ matrix.otp }}-${{ matrix.elixir }}-mix-${{ hashFiles(format('{0}{1}', github.workspace, '/mix.lock')) }}
-
-      - name: Retrieve Compiled Files Cache
-        uses: actions/cache@v3
-        with:
-          path: _build
-          key: ${{ runner.os }}-${{ matrix.otp }}-${{ matrix.elixir }}-compiled
-
-      - name: Clear cache if message
-        env:
-          PR_DESCR: ${{ github.event.pull_request.body }}
-          COMMIT_MSG: ${{ github.event.head_commit.message }}
-        run: |
-          if grep -q "\[flush\]" <<<"$COMMIT_MSG$PR_DESCR"; then
-            echo "removing cache..."
-            rm -rf _build
-          fi
+          path: |
+            deps
+            _build
+          key: ${{ runner.os }}_${{ matrix.otp }}_${{ matrix.elixir }}_cache_${{ hashFiles('**/mix.lock') }}
+          restore-keys: |
+            ${{ runner.os }}_${{ matrix.otp }}_${{ matrix.elixir }}_cache_
 
       - name: Install Mix Dependencies
-        if: steps.mix-cache.outputs.cache-hit != 'true'
+        if: steps.cache.outputs.cache-hit != 'true'
         run: |
           mix local.rebar --force
           mix local.hex --force
           mix deps.get
 
+      - name: Compile dev
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: mix compile
+        env:
+          MIX_ENV: dev
+
+      - name: Check warnings
+        run: mix compile --warnings-as-errors --no-deps-check
+        env:
+          MIX_ENV: dev
+
+      - name: Compile test
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: mix compile
+        env:
+          MIX_ENV: test
+
       - name: Check Formatting
         run: mix format --check-formatted
 
       - name: Run credo
-        run: mix credo --strict
+        run: mix credo --strict --ignore todo
 
       - name: Run Tests
         run: mix test
