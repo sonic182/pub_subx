@@ -36,6 +36,14 @@ defmodule PubSubx do
     GenServer.call(name, {:subscribe, {topic, pid}})
   end
 
+  def subscribers(topic, name \\ __MODULE__) do
+    GenServer.call(name, {:subscribers, topic})
+  end
+
+  def topics(name \\ __MODULE__) do
+    GenServer.call(name, :topics)
+  end
+
   def publish(topic, message, name \\ __MODULE__) do
     GenServer.cast(name, {:publish, {topic, message}})
   end
@@ -44,13 +52,7 @@ defmodule PubSubx do
     GenServer.call(name, {:unsubscribe, {topic, pid}})
   end
 
-  def handle_call({:subscribe, {topic, pid}}, state) do
-    process = get_process(pid)
-    {:ok, _} = Registry.register(state.registry, topic, target: process)
-    {:reply, :ok, state}
-  end
-
-  def handle_call({:publish, {topic, message}}, state) do
+  def handle_cast({:publish, {topic, message}}, state) do
     Registry.dispatch(state.registry, topic, fn entries ->
       for {_self, [target: target]} <- entries, do: send(target, message)
     end)
@@ -58,10 +60,30 @@ defmodule PubSubx do
     {:noreply, state}
   end
 
-  def handle_call({:unsubscribe, {topic, pid}}, state) do
+  def handle_call({:subscribe, {topic, pid}}, _from, state) do
     process = get_process(pid)
-    {:ok, _} = Registry.unregister_match(state.registry, topic, target: process)
+    {:ok, _} = Registry.register(state.registry, topic, target: process)
     {:reply, :ok, state}
+  end
+
+  def handle_call({:unsubscribe, {topic, pid}}, _from, state) do
+    process = get_process(pid)
+    :ok = Registry.unregister_match(state.registry, topic, target: process)
+    {:reply, :ok, state}
+  end
+
+  def handle_call(:topics, _from, state) do
+    keys = Registry.keys(state.registry, self())
+    {:reply, keys, state}
+  end
+
+  def handle_call({:subscribers, topic}, _from, state) do
+    subscribers =
+      state.registry
+      |> Registry.values(topic, self())
+      |> Enum.map(fn [target: pid] -> pid end)
+
+    {:reply, subscribers, state}
   end
 
   defp get_process(pid) when is_atom(pid), do: Process.whereis(pid)
