@@ -61,6 +61,7 @@ defmodule PubSubx do
   @impl true
   @spec handle_call(term(), {pid(), atom}, map()) :: {:reply, term(), map()}
   def handle_call({:subscribe, {topic, pid}}, _from, state) do
+    Process.monitor(pid)
     process = get_process(pid)
     {:ok, _} = Registry.register(state.registry, topic, target: process)
     {:reply, :ok, state}
@@ -68,13 +69,13 @@ defmodule PubSubx do
 
   def handle_call({:unsubscribe, {topic, pid}}, _from, state) do
     process = get_process(pid)
-    :ok = Registry.unregister_match(state.registry, topic, target: process)
+    :ok = unregister(state.registry, topic, process)
     {:reply, :ok, state}
   end
 
   def handle_call(:topics, _from, state) do
-    keys = Registry.keys(state.registry, self())
-    {:reply, keys, state}
+    topics = get_topics(state.registry)
+    {:reply, topics, state}
   end
 
   def handle_call({:subscribers, topic}, _from, state) do
@@ -85,6 +86,21 @@ defmodule PubSubx do
 
     {:reply, subscribers, state}
   end
+
+  @impl true
+  @spec handle_info(term(), map()) :: {:noreply, map()}
+  def handle_info({:DOWN, _ref, :process, pid, _reason}, state) do
+    state.registry
+    |> get_topics()
+    |> Enum.each(&unregister(state.registry, &1, pid))
+
+    {:noreply, state}
+  end
+
+  defp get_topics(registry), do: Registry.keys(registry, self())
+
+  defp unregister(registry, topic, process),
+    do: Registry.unregister_match(registry, topic, target: process)
 
   @spec get_process(process) :: pid
   defp get_process(pid) when is_atom(pid), do: Process.whereis(pid)
