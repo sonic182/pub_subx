@@ -3,7 +3,7 @@ defmodule PubSubxTest do
   doctest PubSubx
 
   setup_all do
-    start_supervised!(PubSubx, [])
+    start_supervised!({PubSubx, []})
 
     :ok
   end
