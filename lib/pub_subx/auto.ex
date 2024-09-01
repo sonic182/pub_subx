@@ -44,7 +44,7 @@ defmodule PubSubx.Auto do
       Starts the `PubSubx` server with the specified name.
       """
       @spec start_link() :: {:ok, pid()} | {:error, term()}
-      def start_link() do
+      def start_link do
         PubSubx.start_link(name: pname())
       end
 
@@ -68,7 +68,7 @@ defmodule PubSubx.Auto do
       Lists all topics with at least one subscriber.
       """
       @spec topics() :: [atom | binary]
-      def topics() do
+      def topics do
         PubSubx.topics(pname())
       end
 
