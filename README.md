@@ -1,5 +1,11 @@
 # PubSubx
 
+![Build Status](https://img.shields.io/github/workflow/status/sonic182/pub_subx/CI)
+![Coverage Status](https://img.shields.io/coveralls/github/sonic182/pub_subx)
+![Hex.pm Version](https://img.shields.io/hexpm/v/pub_subx)
+![License](https://img.shields.io/github/license/sonic182/pub_subx)
+![Issues](https://img.shields.io/github/issues/sonic182/pub_subx)
+
 `PubSubx` is a lightweight and flexible publish-subscribe (PubSub) library built on top of Elixir's `GenServer` and `Registry`. It allows processes to communicate by subscribing to topics and receiving messages when they are published. This is useful for decoupling components in your Elixir applications, enabling easier scalability and maintainability.
 
 ## Features
@@ -24,3 +30,8 @@ end
 ## Usage
 
 The docs can be found at <https://hexdocs.pm/pub_subx>.
+
+
+## License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
