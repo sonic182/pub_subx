@@ -5,19 +5,16 @@ on: [push, pull_request]
 jobs:
   test:
     name: OTP ${{matrix.otp}} / Elixir ${{matrix.elixir}}
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-latest
     env:
       MIX_ENV: test
     strategy:
       matrix:
-        elixir: [ 1.12.0, 1.13.0, 1.14.0 ]
-        otp: [ 23.0.0, 24.0.0 ]
-        exclude:
-          - elixir: 1.11.0
-            otp: 24.0.0
+        elixir: [1.16.0, 1.17.0]
+        otp: [25.0.0, 26.0.0]
 
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
 
       - name: Setup elixir
         uses: erlef/setup-beam@v1
@@ -26,7 +23,7 @@ jobs:
           elixir-version: ${{ matrix.elixir }}
 
       - name: Cache
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         id: cache #id to use in retrieve action
         with:
           path: |
