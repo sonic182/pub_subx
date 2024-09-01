@@ -100,6 +100,8 @@ defmodule PubSubx do
   ## Options
 
     - `:name` - The name to register the `GenServer` under (default: `PubSubx`).
+    - `:registry_name` - Option to possible change the inner registry name.
+    - `:registry_partitions` - Option to possible change the inner registry partitions, default: `System.schedulers_online()`
   """
   @spec start_link(Keyword.t()) :: GenServer.on_start()
   def start_link(opts \\ []) do
@@ -109,10 +111,16 @@ defmodule PubSubx do
   @impl true
   @spec init(Keyword.t()) :: {:ok, map()}
   def init(opts) do
-    registry_opts = Keyword.get(opts, :registry, [])
+    name = get_name(opts)
+    registry_name = String.to_atom("PubSubx.Registry.#{name}")
+
+    registry_opts = [
+      name: Keyword.get(opts, :registry_name, registry_name),
+      partitions: Keyword.get(opts, :registry_partitions, System.schedulers_online())
+    ]
 
     state = %{
-      registry: opts |> get_name() |> get_registry(registry_opts)
+      registry: get_registry(registry_opts)
     }
 
     {:ok, state}
@@ -234,16 +242,12 @@ defmodule PubSubx do
   defp get_process(pid), do: pid
 
   @doc false
-  @spec get_registry(atom | binary, keyword()) :: atom
-  defp get_registry(name, opts) do
-    registry_name = String.to_atom("PubSubx.Registry.#{name}")
-
+  @spec get_registry(keyword()) :: atom
+  defp get_registry(opts) do
     registry_opts =
       Keyword.merge(
         [
-          keys: :duplicate,
-          name: registry_name,
-          partitions: System.schedulers_online()
+          keys: :duplicate
         ],
         opts
       )
@@ -251,7 +255,7 @@ defmodule PubSubx do
     {:ok, _registry} =
       Registry.start_link(registry_opts)
 
-    registry_name
+    Keyword.get(registry_opts, :name)
   end
 
   @doc false
