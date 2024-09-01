@@ -45,12 +45,6 @@ defmodule PubSubx do
   ## Options
 
     - `:name` - The name to register the `GenServer` under (default: `PubSubx`).
-
-  ## Examples
-
-      iex> {:ok, pid} = PubSubx.start_link(name: :my_pubsub)
-      iex> is_pid(pid)
-      true
   """
   @spec start_link(Keyword.t()) :: GenServer.on_start()
   def start_link(opts \\ []) do
@@ -71,11 +65,6 @@ defmodule PubSubx do
   Subscribes a given process (`pid`) to a specific `topic`.
 
   If a `name` is not provided, it defaults to the `PubSubx` module name.
-
-  ## Examples
-
-      iex> PubSubx.subscribe(:my_topic, self(), :my_pubsub)
-      :ok
   """
   @spec subscribe(topic, process, process) :: :ok
   def subscribe(topic, pid, name \\ __MODULE__) do
@@ -86,11 +75,6 @@ defmodule PubSubx do
   Returns a list of PIDs that are subscribed to the specified `topic`.
 
   If a `name` is not provided, it defaults to the `PubSubx` module name.
-
-  ## Examples
-
-      iex> PubSubx.subscribers(:my_topic, :my_pubsub)
-      [#PID<0.123.0>, #PID<0.456.0>]
   """
   @spec subscribers(topic, process) :: [pid]
   def subscribers(topic, name \\ __MODULE__) do
@@ -101,11 +85,6 @@ defmodule PubSubx do
   Lists all topics that have active subscribers.
 
   If a `name` is not provided, it defaults to the `PubSubx` module name.
-
-  ## Examples
-
-      iex> PubSubx.topics(:my_pubsub)
-      [:my_topic, :another_topic]
   """
   @spec topics(process) :: [topic]
   def topics(name \\ __MODULE__) do
@@ -118,11 +97,6 @@ defmodule PubSubx do
   All subscribers to that `topic` will receive the `message`.
 
   If a `name` is not provided, it defaults to the `PubSubx` module name.
-
-  ## Examples
-
-      iex> PubSubx.publish(:my_topic, "Hello, World!", :my_pubsub)
-      :ok
   """
   @spec publish(topic, term(), process) :: :ok
   def publish(topic, message, name \\ __MODULE__) do
@@ -133,11 +107,6 @@ defmodule PubSubx do
   Unsubscribes a given process (`pid`) from the specified `topic`.
 
   If a `name` is not provided, it defaults to the `PubSubx` module name.
-
-  ## Examples
-
-      iex> PubSubx.unsubscribe(:my_topic, self(), :my_pubsub)
-      :ok
   """
   @spec unsubscribe(topic, process, process) :: :ok
   def unsubscribe(topic, pid, name \\ __MODULE__) do
