@@ -1,5 +1,8 @@
 defmodule MyPubSubx do
-  use PubSubx.Auto
+  @moduledoc false
+
+  use PubSubx.Auto,
+    name: MyPubSubx
 end
 
 defmodule PubSubxMacroTest do
@@ -9,6 +12,7 @@ defmodule PubSubxMacroTest do
     children = [
       MyPubSubx
     ]
+
     {:ok, pid} = Supervisor.start_link(children, strategy: :one_for_one)
     assert is_pid(pid)
   end
