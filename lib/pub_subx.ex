@@ -128,8 +128,6 @@ defmodule PubSubx do
 
   @doc """
   Subscribes a given process (`pid`) to a specific `topic`.
-
-  If a `name` is not provided, it defaults to the `PubSubx` module name.
   """
   @spec subscribe(process, topic, process) :: :ok
   def subscribe(pubsub, topic, pid) do
@@ -138,8 +136,6 @@ defmodule PubSubx do
 
   @doc """
   Returns a list of PIDs that are subscribed to the specified `topic`.
-
-  If a `name` is not provided, it defaults to the `PubSubx` module name.
   """
   @spec subscribers(process, topic) :: [pid]
   def subscribers(process, topic) do
@@ -148,8 +144,6 @@ defmodule PubSubx do
 
   @doc """
   Lists all topics that have active subscribers.
-
-  If a `name` is not provided, it defaults to the `PubSubx` module name.
   """
   @spec topics(process) :: [topic]
   def topics(process) do
@@ -160,8 +154,6 @@ defmodule PubSubx do
   Publishes a message to the specified `topic`.
 
   All subscribers to that `topic` will receive the `message`.
-
-  If a `name` is not provided, it defaults to the `PubSubx` module name.
   """
   @spec publish(process, topic, term()) :: :ok
   def publish(process, topic, message) do
@@ -170,8 +162,6 @@ defmodule PubSubx do
 
   @doc """
   Unsubscribes a given process (`pid`) from the specified `topic`.
-
-  If a `name` is not provided, it defaults to the `PubSubx` module name.
   """
   @spec unsubscribe(process, topic, process) :: :ok
   def unsubscribe(process, topic, pid) do
