@@ -4,15 +4,19 @@ defmodule PubSubx.MixProject do
   def project do
     [
       app: :pub_subx,
-      version: "0.2.1",
+      version: "0.2.2",
       elixir: "~> 1.12",
       start_permanent: Mix.env() == :prod,
-      description: "A lightweight PubSub library built on top of GenServer and Registry.",
+      description:
+        "A lightweight and efficient PubSub library for Elixir, built on top of GenServer and Registry, providing robust pubsub functionalities for real-time messaging and event handling.",
       package: package(),
       deps: deps(),
       docs: [
         main: "PubSubx",
-        extras: ["README.md", "CHANGELOG.md"]
+        extras: ["README.md", "CHANGELOG.md"],
+        groups_for_extras: [
+          guides: ~w(README.md CHANGELOG.md)
+        ]
       ]
     ]
   end
@@ -37,7 +41,9 @@ defmodule PubSubx.MixProject do
     [
       maintainers: ["sonic182"],
       licenses: ["MIT"],
-      links: %{github: "https://github.com/sonic182/pub_subx"}
+      links: %{github: "https://github.com/sonic182/pub_subx"},
+      description:
+        "A lightweight and efficient PubSub library for Elixir, built on top of GenServer and Registry, providing robust pubsub functionalities for real-time messaging and event handling."
     ]
   end
 end
