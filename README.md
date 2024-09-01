@@ -1,7 +1,5 @@
 # PubSubx
 
-![Build Status](https://img.shields.io/github/workflow/status/sonic182/pub_subx/CI)
-![Coverage Status](https://img.shields.io/coveralls/github/sonic182/pub_subx)
 ![Hex.pm Version](https://img.shields.io/hexpm/v/pub_subx)
 ![License](https://img.shields.io/github/license/sonic182/pub_subx)
 ![Issues](https://img.shields.io/github/issues/sonic182/pub_subx)
