@@ -5,7 +5,7 @@ on: [push, pull_request]
 jobs:
   test:
     name: OTP ${{matrix.otp}} / Elixir ${{matrix.elixir}}
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-latest
     env:
       MIX_ENV: test
     strategy:
