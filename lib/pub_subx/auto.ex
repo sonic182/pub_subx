@@ -36,16 +36,17 @@ defmodule PubSubx.Auto do
       def child_spec(opts) do
         %{
           id: __MODULE__,
-          start: {PubSubx, :start_link, opts}
+          start: {__MODULE__, :start_link, opts}
         }
       end
 
       @doc """
       Starts the `PubSubx` server with the specified name.
       """
-      @spec start_link() :: {:ok, pid()} | {:error, term()}
-      def start_link do
-        PubSubx.start_link(name: pname())
+      @spec start_link(keyword()) :: {:ok, pid()} | {:error, term()}
+      def start_link(opts \\ []) do
+        opts = Keyword.merge([name: pname()], opts)
+        PubSubx.start_link(opts)
       end
 
       @doc """
