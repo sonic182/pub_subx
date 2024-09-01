@@ -27,7 +27,7 @@ defmodule PubSubx.Utils do
       iex>   |> Atom.to_string()
       iex>   |> String.contains?("chat")
       iex> end
-      iex> PubSubx.Utils.distribute_publish(MyApp.MyPubSub, [:my_topic, "Hello, world!"], node_filter/1)
+      iex> PubSubx.Utils.distribute_publish(MyApp.MyPubSub, [:my_topic, "Hello, world!"], &node_filter/1)
       # This will publish the message only to nodes whose name contains "chat".
 
   """

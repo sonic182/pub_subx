@@ -66,6 +66,10 @@ defmodule PubSubx do
   MyApp.MyPubSub.unsubscribe(:my_topic, self())
   ```
 
+  ## Distributed Publish
+
+  You can check `PubSubx.Utils` for distribute_publish example, when having erlang/elixir nodes interconnected (eg: with libcluster)
+
   ## Example Usage
 
   Start the PubSubx server:
