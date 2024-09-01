@@ -3,14 +3,14 @@ defmodule PubSubxTest do
   doctest PubSubx
 
   setup_all do
-    start_supervised!({PubSubx, []})
+    {:ok, pubsub} = start_supervised({PubSubx, []})
 
-    :ok
+    %{pubsub: pubsub}
   end
 
-  test "subscribe and publish" do
-    PubSubx.subscribe(:whatever, self())
-    PubSubx.publish(:whatever, :a_message)
+  test "subscribe and publish", %{pubsub: pubsub} do
+    PubSubx.subscribe(pubsub, :whatever, self())
+    PubSubx.publish(pubsub, :whatever, :a_message)
 
     receive do
       :a_message ->
@@ -21,10 +21,10 @@ defmodule PubSubxTest do
     end
   end
 
-  test "unsubscribe" do
-    PubSubx.subscribe(:whatever, self())
-    PubSubx.unsubscribe(:whatever, self())
-    PubSubx.publish(:whatever, :a_message)
+  test "unsubscribe", %{pubsub: pubsub} do
+    PubSubx.subscribe(pubsub, :whatever, self())
+    PubSubx.unsubscribe(pubsub, :whatever, self())
+    PubSubx.publish(pubsub, :whatever, :a_message)
 
     receive do
       :a_message ->
@@ -35,23 +35,23 @@ defmodule PubSubxTest do
     end
   end
 
-  test "subscribers" do
-    PubSubx.subscribe(:foo, self())
-    assert PubSubx.subscribers(:foo) == [self()]
+  test "subscribers", %{pubsub: pubsub} do
+    PubSubx.subscribe(pubsub, :foo, self())
+    assert PubSubx.subscribers(pubsub, :foo) == [self()]
   end
 
-  test "topics" do
-    PubSubx.subscribe(:foo, self())
-    PubSubx.subscribe(:bar, self())
-    assert MapSet.new(PubSubx.topics()) == MapSet.new([:foo, :bar])
+  test "topics", %{pubsub: pubsub} do
+    PubSubx.subscribe(pubsub, :foo, self())
+    PubSubx.subscribe(pubsub, :bar, self())
+    assert MapSet.new(PubSubx.topics(pubsub)) == MapSet.new([:foo, :bar])
   end
 
   test "topics with independent pubsubx" do
     pname = TopicsPubSubx
     start_supervised!({PubSubx, [name: pname]})
 
-    PubSubx.subscribe(:foo, self(), pname)
-    PubSubx.subscribe(:bar, self(), pname)
+    PubSubx.subscribe(pname, :foo, self())
+    PubSubx.subscribe(pname, :bar, self())
     assert MapSet.new(PubSubx.topics(pname)) == MapSet.new([:foo, :bar])
   end
 end

@@ -66,9 +66,9 @@ defmodule PubSubx do
 
   If a `name` is not provided, it defaults to the `PubSubx` module name.
   """
-  @spec subscribe(topic, process, process) :: :ok
-  def subscribe(topic, pid, name \\ __MODULE__) do
-    GenServer.call(name, {:subscribe, {topic, pid}})
+  @spec subscribe(process, topic, process) :: :ok
+  def subscribe(pubsub, topic, pid) do
+    GenServer.call(pubsub, {:subscribe, {topic, pid}})
   end
 
   @doc """
@@ -76,9 +76,9 @@ defmodule PubSubx do
 
   If a `name` is not provided, it defaults to the `PubSubx` module name.
   """
-  @spec subscribers(topic, process) :: [pid]
-  def subscribers(topic, name \\ __MODULE__) do
-    GenServer.call(name, {:subscribers, topic})
+  @spec subscribers(process, topic) :: [pid]
+  def subscribers(process, topic) do
+    GenServer.call(process, {:subscribers, topic})
   end
 
   @doc """
@@ -87,8 +87,8 @@ defmodule PubSubx do
   If a `name` is not provided, it defaults to the `PubSubx` module name.
   """
   @spec topics(process) :: [topic]
-  def topics(name \\ __MODULE__) do
-    GenServer.call(name, :topics)
+  def topics(process) do
+    GenServer.call(process, :topics)
   end
 
   @doc """
@@ -98,9 +98,9 @@ defmodule PubSubx do
 
   If a `name` is not provided, it defaults to the `PubSubx` module name.
   """
-  @spec publish(topic, term(), process) :: :ok
-  def publish(topic, message, name \\ __MODULE__) do
-    GenServer.cast(name, {:publish, {topic, message}})
+  @spec publish(process, topic, term()) :: :ok
+  def publish(process, topic, message) do
+    GenServer.cast(process, {:publish, {topic, message}})
   end
 
   @doc """
@@ -108,9 +108,9 @@ defmodule PubSubx do
 
   If a `name` is not provided, it defaults to the `PubSubx` module name.
   """
-  @spec unsubscribe(topic, process, process) :: :ok
-  def unsubscribe(topic, pid, name \\ __MODULE__) do
-    GenServer.call(name, {:unsubscribe, {topic, pid}})
+  @spec unsubscribe(process, topic, process) :: :ok
+  def unsubscribe(process, topic, pid) do
+    GenServer.call(process, {:unsubscribe, {topic, pid}})
   end
 
   @impl true
