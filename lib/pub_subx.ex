@@ -11,6 +11,61 @@ defmodule PubSubx do
   - **Dynamic Topics:** Topics are dynamically created as they are subscribed to, and they are removed when no subscribers exist.
   - **Process Monitoring:** Automatically removes subscribers when the process is no longer alive.
 
+  ## Auto module
+
+  `PubSubx.Auto` module is an utility mod that helps developers to use less code for your PubSubx module definition.
+
+  ## Example Usage with Auto mod
+
+  Define an PubSubx module
+
+  ```elixir
+  defmodule MyApp.MyPubSub do
+    use PubSubx.Auto, name: MyPubSub
+  end
+  ```
+
+  Include it in your supervisor tree
+
+  ```elixir
+  defmodule MyApp.Application do
+    use Application
+
+    def start(_type, _args) do
+      children = [
+        # Start the PubSubx server
+        {MyApp.MyPubSub, []}
+      ]
+
+      opts = [strategy: :one_for_one, name: MyApp.Supervisor]
+      Supervisor.start_link(children, opts)
+    end
+  end
+  ```
+
+  Now you can use the MyPubSub module: 
+
+  ```elixir
+  # if you didn't use supervisor tree, you can start it as follow
+  {:ok, _pid} = MyApp.MyPubSub.start_link()
+
+  # subscribe a pid (eg: self()) to a topic
+  MyApp.MyPubSub.subscribe(:my_topic, self())
+
+  # list subscribers
+  subscribers = MyApp.MyPubSub.subscribers(:my_topic)
+
+  # list topics
+  topics = MyApp.MyPubSub.topics()
+
+  # publish a message
+  MyApp.MyPubSub.publish(:my_topic, "Hello, world!")
+
+  # Unsubscribe a process from a topic
+  # This is optional. This happens automatically if the subscribed process dies.
+  MyApp.MyPubSub.unsubscribe(:my_topic, self())
+  ```
+
   ## Example Usage
 
   Start the PubSubx server:
