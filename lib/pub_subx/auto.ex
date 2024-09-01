@@ -30,7 +30,7 @@ defmodule PubSubx.Auto do
 
     quote do
       @spec pname() :: module()
-      defp pname, do: unquote(name) || __MODULE__
+      defp pname, do: unquote(name)
 
       @spec child_spec(Keyword.t()) :: Supervisor.child_spec()
       def child_spec(opts) do

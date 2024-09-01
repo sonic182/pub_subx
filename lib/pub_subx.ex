@@ -109,8 +109,10 @@ defmodule PubSubx do
   @impl true
   @spec init(Keyword.t()) :: {:ok, map()}
   def init(opts) do
+    registry_opts = Keyword.get(opts, :registry, [])
+
     state = %{
-      registry: get_registry(get_name(opts))
+      registry: opts |> get_name() |> get_registry(registry_opts)
     }
 
     {:ok, state}
@@ -232,16 +234,22 @@ defmodule PubSubx do
   defp get_process(pid), do: pid
 
   @doc false
-  @spec get_registry(atom | binary) :: atom
-  defp get_registry(name) do
+  @spec get_registry(atom | binary, keyword()) :: atom
+  defp get_registry(name, opts) do
     registry_name = String.to_atom("PubSubx.Registry.#{name}")
 
-    {:ok, _registry} =
-      Registry.start_link(
-        keys: :duplicate,
-        name: registry_name,
-        partitions: System.schedulers_online()
+    registry_opts =
+      Keyword.merge(
+        [
+          keys: :duplicate,
+          name: registry_name,
+          partitions: System.schedulers_online()
+        ],
+        opts
       )
+
+    {:ok, _registry} =
+      Registry.start_link(registry_opts)
 
     registry_name
   end
