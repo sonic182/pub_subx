@@ -7,9 +7,13 @@ defmodule PubSubx.MixProject do
       version: "0.1.2",
       elixir: "~> 1.12",
       start_permanent: Mix.env() == :prod,
-      description: "A lightweigh PubSub implementation",
+      description: "A lightweight PubSub library built on top of GenServer and Registry.",
       package: package(),
-      deps: deps()
+      deps: deps(),
+      docs: [
+        main: "PubSubx",
+        extras: ["README.md", "CHANGELOG.md"]
+      ]
     ]
   end
 
@@ -33,8 +37,7 @@ defmodule PubSubx.MixProject do
     [
       maintainers: ["sonic182"],
       licenses: ["MIT"],
-      links: %{github: "https://github.com/sonic182/pub_subx"},
-      files: ~w(lib mix.exs README.md .formatter.exs)
+      links: %{github: "https://github.com/sonic182/pub_subx"}
     ]
   end
 end
