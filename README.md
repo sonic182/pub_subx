@@ -111,6 +111,28 @@ mix run bench/pub_subx_bench.exs
 The script starts the `phoenix_pubsub` application it needs before running the
 comparison, so the command above is the intended way to execute the benchmark.
 
+Example run on a MacBook Pro 13-inch (Mid 2017, no Touch Bar, two Thunderbolt 3
+ports), Intel Core i5-7360U 2.30 GHz, 4 cores, 8 GB RAM:
+
+```text
+Name                                   ips        average
+pub_subx exact publish           1052.15 K        0.95 μs
+pub_subx wildcard publish         880.92 K        1.14 μs
+phoenix_pubsub exact publish      412.43 K        2.42 μs
+registry exact dispatch           360.22 K        2.78 μs
+```
+
+Relative to this run:
+
+- `pub_subx exact publish` was `155.11%` faster than `phoenix_pubsub exact publish`
+- `pub_subx exact publish` was `192.09%` faster than `registry exact dispatch`
+- `pub_subx wildcard publish` was `113.59%` faster than `phoenix_pubsub exact publish`
+- `pub_subx wildcard publish` was `144.55%` faster than `registry exact dispatch`
+- `pub_subx wildcard publish` was `16.27%` slower than `pub_subx exact publish`
+
+This example is illustrative only. Benchmark results will vary with CPU,
+Elixir/Erlang versions, scheduler behavior, and system load.
+
 ## Future direction
 
 If repeated event schemas emerge across multiple users of the library, a later
