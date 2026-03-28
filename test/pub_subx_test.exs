@@ -1,91 +1,162 @@
 defmodule PubSubxTest do
   use ExUnit.Case
+
+  alias PubSubx.Event
+
   doctest PubSubx
 
-  setup_all do
-    {:ok, pubsub} = start_supervised({PubSubx, []})
+  setup do
+    {:ok, pubsub} = start_named_pubsub()
 
     %{pubsub: pubsub}
   end
 
-  test "subscribe and publish", %{pubsub: pubsub} do
-    PubSubx.subscribe(pubsub, :whatever, self())
-    PubSubx.publish(pubsub, :whatever, :a_message)
+  test "publish/3 delivers an event envelope", %{pubsub: pubsub} do
+    :ok = PubSubx.subscribe(pubsub, "orders.created", self())
+    :ok = PubSubx.publish(pubsub, "orders.created", %{id: 1})
 
-    receive do
-      :a_message ->
-        :ok
-    after
-      :timer.seconds(5) ->
-        raise "no message received"
-    end
+    assert_receive %Event{
+      topic: "orders.created",
+      payload: %{id: 1},
+      timestamp: %DateTime{},
+      metadata: %{},
+      correlation_id: nil,
+      trace_id: nil
+    }
   end
 
-  test "unsubscribe", %{pubsub: pubsub} do
-    PubSubx.subscribe(pubsub, :whatever, self())
-    PubSubx.unsubscribe(pubsub, :whatever, self())
-    PubSubx.publish(pubsub, :whatever, :a_message)
+  test "publish/4 includes metadata and ids", %{pubsub: pubsub} do
+    timestamp = DateTime.utc_now()
+    :ok = PubSubx.subscribe(pubsub, "orders.created", self())
 
-    receive do
-      :a_message ->
-        raise "unsubscribe doesn't work"
-    after
-      :timer.seconds(1) ->
-        :ok
-    end
+    :ok =
+      PubSubx.publish(pubsub, "orders.created", %{id: 1},
+        timestamp: timestamp,
+        metadata: %{source: :test},
+        correlation_id: "corr-1",
+        trace_id: "trace-1"
+      )
+
+    assert_receive %Event{
+      topic: "orders.created",
+      payload: %{id: 1},
+      timestamp: ^timestamp,
+      metadata: %{source: :test},
+      correlation_id: "corr-1",
+      trace_id: "trace-1"
+    }
   end
 
-  test "subscribers", %{pubsub: pubsub} do
-    PubSubx.subscribe(pubsub, :foo, self())
-    assert MapSet.new(PubSubx.subscribers(pubsub, :foo)) == MapSet.new([self()])
+  test "wildcard subscriptions match hierarchical topics", %{pubsub: pubsub} do
+    :ok = PubSubx.subscribe(pubsub, "orders.*", self())
+    :ok = PubSubx.publish(pubsub, "orders.created", %{id: 1})
+
+    assert_receive %Event{topic: "orders.created"}
   end
 
-  test "topics", %{pubsub: pubsub} do
-    PubSubx.subscribe(pubsub, :foo, self())
-    PubSubx.subscribe(pubsub, :bar, self())
-    assert MapSet.new(PubSubx.topics(pubsub)) == MapSet.new([:foo, :bar])
+  test "double-star subscriptions match trailing segments", %{pubsub: pubsub} do
+    :ok = PubSubx.subscribe(pubsub, "orders.**", self())
+    :ok = PubSubx.publish(pubsub, "orders.eu.created", %{id: 1})
+
+    assert_receive %Event{topic: "orders.eu.created"}
   end
 
-  test "topics with independent pubsubx" do
-    pname = TopicsPubSubx
-    start_supervised!({PubSubx, [name: pname]})
+  test "atom topics remain exact matches", %{pubsub: pubsub} do
+    :ok = PubSubx.subscribe(pubsub, :orders, self())
+    :ok = PubSubx.publish(pubsub, :orders, %{id: 1})
+    :ok = PubSubx.publish(pubsub, :"orders.*", %{id: 2})
 
-    PubSubx.subscribe(pname, :foo, self())
-    PubSubx.subscribe(pname, :bar, self())
-    assert MapSet.new(PubSubx.topics(pname)) == MapSet.new([:foo, :bar])
+    assert_receive %Event{topic: :orders, payload: %{id: 1}}
+    refute_receive %Event{topic: :"orders.*"}
   end
 
-  test "duplicate subscribe is idempotent", %{pubsub: pubsub} do
-    PubSubx.subscribe(pubsub, :foo, self())
-    PubSubx.subscribe(pubsub, :foo, self())
-    PubSubx.publish(pubsub, :foo, :only_once)
+  test "filter can reject deliveries", %{pubsub: pubsub} do
+    :ok =
+      PubSubx.subscribe(pubsub, "orders.*", self(),
+        filter: fn event -> event.payload.region == :eu end
+      )
 
-    assert_receive :only_once
-    refute_receive :only_once
-    assert MapSet.new(PubSubx.subscribers(pubsub, :foo)) == MapSet.new([self()])
+    :ok = PubSubx.publish(pubsub, "orders.created", %{region: :us})
+    refute_receive %Event{}
   end
 
-  test "topics include subscriptions from other processes", %{pubsub: pubsub} do
-    pid =
+  test "filter errors do not crash the pubsub and emit drop telemetry", %{pubsub: pubsub} do
+    test_pid = self()
+
+    attach_many(
+      [
+        [:pub_subx, :drop]
+      ],
+      fn event_name, measurements, metadata, _config ->
+        send(test_pid, {:telemetry, event_name, measurements, metadata})
+      end
+    )
+
+    :ok =
+      PubSubx.subscribe(pubsub, "orders.*", self(), filter: fn _event -> raise "boom" end)
+
+    receiver =
       spawn(fn ->
-        PubSubx.subscribe(pubsub, :other_topic, self())
+        :ok = PubSubx.subscribe(pubsub, "orders.*", self())
 
         receive do
-          :stop -> :ok
+          event -> send(test_pid, {:receiver_event, event})
         end
       end)
 
     assert eventually(fn ->
-             MapSet.member?(MapSet.new(PubSubx.topics(pubsub)), :other_topic)
+             Enum.member?(PubSubx.subscribers(pubsub, "orders.*"), receiver)
            end)
 
-    send(pid, :stop)
+    :ok = PubSubx.publish(pubsub, "orders.created", %{id: 1})
+
+    assert_receive {:receiver_event, %Event{topic: "orders.created", payload: %{id: 1}}}
+    assert_receive {:telemetry, [:pub_subx, :drop], %{count: 1}, %{reason: :filter_error}}
+
+    assert Process.alive?(pubsub)
+  after
+    detach_many()
+  end
+
+  test "re-subscribing replaces the filter", %{pubsub: pubsub} do
+    :ok =
+      PubSubx.subscribe(pubsub, "orders.*", self(),
+        filter: fn event -> event.payload.region == :eu end
+      )
+
+    :ok =
+      PubSubx.subscribe(pubsub, "orders.*", self(),
+        filter: fn event -> event.payload.region == :us end
+      )
+
+    :ok = PubSubx.publish(pubsub, "orders.created", %{region: :us})
+
+    assert_receive %Event{payload: %{region: :us}}
+  end
+
+  test "one pid receives one delivery even if exact and wildcard subscriptions match", %{
+    pubsub: pubsub
+  } do
+    :ok = PubSubx.subscribe(pubsub, "orders.created", self())
+    :ok = PubSubx.subscribe(pubsub, "orders.*", self())
+    :ok = PubSubx.publish(pubsub, "orders.created", %{id: 1})
+
+    assert_receive %Event{topic: "orders.created"}
+    refute_receive %Event{}
+  end
+
+  test "subscribers and topics reflect exact and wildcard registrations", %{pubsub: pubsub} do
+    :ok = PubSubx.subscribe(pubsub, "orders.*", self())
+    :ok = PubSubx.subscribe(pubsub, :system, self())
+
+    assert MapSet.new(PubSubx.subscribers(pubsub, "orders.*")) == MapSet.new([self()])
+    assert MapSet.new(PubSubx.topics(pubsub)) == MapSet.new(["orders.*", :system])
   end
 
   test "dead subscribers are cleaned up", %{pubsub: pubsub} do
     pid =
       spawn(fn ->
-        PubSubx.subscribe(pubsub, :ephemeral, self())
+        :ok = PubSubx.subscribe(pubsub, "orders.**", self())
 
         receive do
           :stop -> :ok
@@ -93,15 +164,128 @@ defmodule PubSubxTest do
       end)
 
     assert eventually(fn ->
-             PubSubx.subscribers(pubsub, :ephemeral) != []
+             PubSubx.subscribers(pubsub, "orders.**") != []
            end)
 
     send(pid, :stop)
 
     assert eventually(fn ->
-             PubSubx.subscribers(pubsub, :ephemeral) == [] and
-               :ephemeral not in PubSubx.topics(pubsub)
+             PubSubx.subscribers(pubsub, "orders.**") == [] and
+               "orders.**" not in PubSubx.topics(pubsub)
            end)
+  end
+
+  test "dead subscriber cleanup emits unsubscribe and subscriber_count telemetry", %{
+    pubsub: pubsub
+  } do
+    test_pid = self()
+
+    attach_many(
+      [
+        [:pub_subx, :unsubscribe],
+        [:pub_subx, :subscriber_count]
+      ],
+      fn event_name, measurements, metadata, _config ->
+        send(test_pid, {:telemetry, event_name, measurements, metadata})
+      end
+    )
+
+    pid =
+      spawn(fn ->
+        :ok = PubSubx.subscribe(pubsub, "orders.**", self())
+
+        receive do
+          :stop -> :ok
+        end
+      end)
+
+    assert eventually(fn ->
+             PubSubx.subscribers(pubsub, "orders.**") == [pid]
+           end)
+
+    send(pid, :stop)
+
+    assert_receive {:telemetry, [:pub_subx, :unsubscribe], %{count: 1},
+                    %{pid: ^pid, topic_pattern: "orders.**"}}
+
+    assert_receive {:telemetry, [:pub_subx, :subscriber_count], %{subscriber_count: 0},
+                    %{topic_pattern: "orders.**"}}
+  after
+    detach_many()
+  end
+
+  test "telemetry emits subscribe, publish, delivery, drop, unsubscribe, and subscriber_count", %{
+    pubsub: pubsub
+  } do
+    test_pid = self()
+
+    attach_many(
+      [
+        [:pub_subx, :subscribe],
+        [:pub_subx, :publish],
+        [:pub_subx, :delivery],
+        [:pub_subx, :drop],
+        [:pub_subx, :unsubscribe],
+        [:pub_subx, :subscriber_count]
+      ],
+      fn event_name, measurements, metadata, _config ->
+        send(test_pid, {:telemetry, event_name, measurements, metadata})
+      end
+    )
+
+    :ok =
+      PubSubx.subscribe(pubsub, "orders.*", self(),
+        filter: fn event -> event.payload.region == :eu end
+      )
+
+    assert_receive {:telemetry, [:pub_subx, :subscribe], %{count: 1},
+                    %{topic_pattern: "orders.*"}}
+
+    assert_receive {:telemetry, [:pub_subx, :subscriber_count], %{subscriber_count: 1}, _metadata}
+
+    :ok = PubSubx.publish(pubsub, "orders.created", %{region: :us})
+
+    assert_receive {:telemetry, [:pub_subx, :drop], %{count: 1}, %{reason: :filter_rejected}}
+
+    refute_receive {:telemetry, [:pub_subx, :drop], %{count: 1}, %{reason: :no_subscribers}}
+
+    assert_receive {:telemetry, [:pub_subx, :publish], %{count: 1}, %{matched_subscribers: 0}}
+
+    :ok = PubSubx.publish(pubsub, "orders.created", %{region: :eu})
+
+    assert_receive {:telemetry, [:pub_subx, :delivery], %{count: 1}, %{topic: "orders.created"}}
+
+    assert_receive {:telemetry, [:pub_subx, :publish], %{count: 1}, %{matched_subscribers: 1}}
+
+    :ok = PubSubx.unsubscribe(pubsub, "orders.*", self())
+
+    assert_receive {:telemetry, [:pub_subx, :unsubscribe], %{count: 1},
+                    %{topic_pattern: "orders.*"}}
+
+    assert_receive {:telemetry, [:pub_subx, :subscriber_count], %{subscriber_count: 0}, _metadata}
+  after
+    detach_many()
+  end
+
+  test "telemetry emits no_subscribers only when no subscription matches", %{pubsub: pubsub} do
+    test_pid = self()
+
+    attach_many(
+      [
+        [:pub_subx, :drop]
+      ],
+      fn event_name, measurements, metadata, _config ->
+        send(test_pid, {:telemetry, event_name, measurements, metadata})
+      end
+    )
+
+    :ok = PubSubx.publish(pubsub, "orders.created", %{id: 1})
+
+    assert_receive {:telemetry, [:pub_subx, :drop], %{count: 1}, %{reason: :no_subscribers}}
+    refute_receive {:telemetry, [:pub_subx, :drop], %{count: 1}, %{reason: :filter_rejected}}
+    refute_receive {:telemetry, [:pub_subx, :drop], %{count: 1}, %{reason: :filter_error}}
+  after
+    detach_many()
   end
 
   defp eventually(fun, attempts \\ 20)
@@ -114,5 +298,32 @@ defmodule PubSubxTest do
       Process.sleep(10)
       eventually(fun, attempts - 1)
     end
+  end
+
+  defp attach_many(events, handler) do
+    Enum.each(events, fn event ->
+      :ok = :telemetry.attach(handler_id(event), event, handler, nil)
+    end)
+  end
+
+  defp detach_many do
+    for event <- [
+          [:pub_subx, :subscribe],
+          [:pub_subx, :publish],
+          [:pub_subx, :delivery],
+          [:pub_subx, :drop],
+          [:pub_subx, :unsubscribe],
+          [:pub_subx, :subscriber_count]
+        ] do
+      :telemetry.detach(handler_id(event))
+    end
+  end
+
+  defp handler_id(event), do: {__MODULE__, event, self()}
+
+  defp start_named_pubsub(opts \\ []) do
+    pubsub_name = :"pubsub_#{System.unique_integer([:positive])}"
+    child_id = {:pubsub, System.unique_integer([:positive])}
+    start_supervised({PubSubx, Keyword.put(opts, :name, pubsub_name)}, id: child_id)
   end
 end

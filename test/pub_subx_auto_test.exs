@@ -8,18 +8,25 @@ end
 defmodule PubSubxMacroTest do
   use ExUnit.Case
 
-  test "subscribe and publish" do
+  alias PubSubx.Event
+
+  test "auto wrapper forwards subscribe and publish options" do
     {:ok, _pid} = start_supervised(MyPubSubx)
 
-    MyPubSubx.subscribe(:whatever, self())
-    MyPubSubx.publish(:whatever, :a_message)
+    :ok =
+      MyPubSubx.subscribe("orders.*", self(), filter: fn event -> event.payload.region == :eu end)
 
-    receive do
-      :a_message ->
-        :ok
-    after
-      :timer.seconds(5) ->
-        raise "no message received"
-    end
+    :ok =
+      MyPubSubx.publish("orders.created", %{region: :eu},
+        metadata: %{source: :macro},
+        correlation_id: "macro-corr"
+      )
+
+    assert_receive %Event{
+      topic: "orders.created",
+      payload: %{region: :eu},
+      metadata: %{source: :macro},
+      correlation_id: "macro-corr"
+    }
   end
 end

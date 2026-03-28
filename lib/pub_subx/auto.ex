@@ -36,7 +36,7 @@ defmodule PubSubx.Auto do
       def child_spec(opts) do
         %{
           id: __MODULE__,
-          start: {__MODULE__, :start_link, opts}
+          start: {__MODULE__, :start_link, [opts]}
         }
       end
 
@@ -55,6 +55,14 @@ defmodule PubSubx.Auto do
       @spec subscribe(topic :: atom | binary, pid()) :: :ok
       def subscribe(topic, pid) do
         PubSubx.subscribe(pname(), topic, pid)
+      end
+
+      @doc """
+      Subscribes a given process to a topic with options.
+      """
+      @spec subscribe(topic :: atom | binary, pid(), keyword()) :: :ok
+      def subscribe(topic, pid, opts) do
+        PubSubx.subscribe(pname(), topic, pid, opts)
       end
 
       @doc """
@@ -79,6 +87,14 @@ defmodule PubSubx.Auto do
       @spec publish(topic :: atom | binary, message :: term()) :: :ok
       def publish(topic, message) do
         PubSubx.publish(pname(), topic, message)
+      end
+
+      @doc """
+      Publishes a message to a given topic with envelope options.
+      """
+      @spec publish(topic :: atom | binary, message :: term(), keyword()) :: :ok
+      def publish(topic, message, opts) do
+        PubSubx.publish(pname(), topic, message, opts)
       end
 
       @doc """

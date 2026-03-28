@@ -1,46 +1,93 @@
 defmodule PubSubx.Utils do
   @moduledoc """
-  Provides utility functions for working with PubSub systems in a distributed Elixir environment.
+  Best-effort utilities for working with `PubSubx` across connected Erlang nodes.
 
-  This module includes functions to facilitate message distribution across nodes in a cluster.
+  `PubSubx.Utils.distribute_publish/4` fans a publish call out to visible nodes
+  and includes the local node by default. Pass `include_local?: false` to
+  suppress local delivery. It does not synchronize subscriptions across nodes,
+  wait for acknowledgements, or retry failed deliveries.
   """
+
+  @type distribute_opts :: [
+          publish: keyword(),
+          node_filter: (node() -> boolean()),
+          node_opts: [node_type()],
+          include_local?: boolean()
+        ]
+
+  @type node_type :: :visible | :hidden | :connected | :this
 
   @doc """
-  Distributes a publish message to all nodes in the cluster.
+  Publishes an event locally and/or across connected nodes with best-effort fanout.
 
-  This function sends a message to the specified `pubsub_mod` on each node that matches the `node_filter`. It uses the `Node.spawn/4` function to execute the `:publish` call on the remote nodes.
+  ## Options
 
-  ## Parameters
+    - `:publish` - Keyword options forwarded to `PubSubx.publish/4`.
+    - `:node_filter` - Predicate for selecting nodes.
+    - `:node_opts` - Options passed to `Node.list/1`.
+      Defaults to `[:visible, :this]`.
+    - `:include_local?` - Whether to publish to the current node as part of the fanout.
+      Defaults to `true`.
 
-    - `pubsub_mod`: The module where the `:publish` function is defined. This is typically your PubSub module.
-    - `publish_args`: A list of arguments for the `:publish` function. This should include the topic and the message.
-    - `node_filter`: A function to filter nodes. It takes a node name as input and returns a boolean indicating whether the node should receive the message. Defaults to accepting all nodes.
-    - `node_opts`: Options for node discovery. Defaults to `[:visible, :this]`, which means it will include visible nodes and the current node.
+  ## Returns
 
-  ## Examples
+  A summary map describing the attempted fanout:
 
-      iex> PubSubx.Utils.distribute_publish(MyApp.MyPubSub, [:my_topic, "Hello, world!"])
-      # This will publish the message "Hello, world!" to the topic `:my_topic` on all nodes in the cluster.
-
-      iex> node_filter = fn node_atom ->
-      iex>   node_atom
-      iex>   |> Atom.to_string()
-      iex>   |> String.contains?("chat")
-      iex> end
-      iex> PubSubx.Utils.distribute_publish(MyApp.MyPubSub, [:my_topic, "Hello, world!"], &node_filter/1)
-      # This will publish the message only to nodes whose name contains "chat".
-
+      %{
+        attempted_nodes: [node()],
+        local?: boolean(),
+        remote_count: non_neg_integer()
+      }
   """
-  @spec distribute_publish(module(), list(), (atom -> boolean()) | nil, list()) :: :ok
-  def distribute_publish(
-        pubsub_mod,
-        publish_args,
-        node_filter \\ & &1,
-        node_opts \\ [:visible, :this]
-      ) do
-    node_opts
-    |> Node.list()
-    |> Stream.filter(node_filter)
-    |> Enum.each(&Node.spawn(&1, pubsub_mod, :publish, publish_args))
+  @spec distribute_publish(PubSubx.process(), PubSubx.topic(), term(), distribute_opts()) :: %{
+          attempted_nodes: [node()],
+          local?: boolean(),
+          remote_count: non_neg_integer()
+        }
+  def distribute_publish(pubsub, topic, payload, opts \\ []) do
+    publish_opts = Keyword.get(opts, :publish, [])
+    node_filter = Keyword.get(opts, :node_filter, fn _node -> true end)
+    node_opts = Keyword.get(opts, :node_opts, [:visible, :this])
+    include_local? = Keyword.get(opts, :include_local?, true)
+
+    current_node = node()
+
+    selected_nodes =
+      node_opts
+      |> Node.list()
+      |> Enum.filter(node_filter)
+
+    remote_nodes = Enum.reject(selected_nodes, &(&1 == current_node))
+
+    if include_local? do
+      PubSubx.publish(pubsub, topic, payload, publish_opts)
+    end
+
+    Enum.each(remote_nodes, fn remote_node ->
+      Node.spawn(remote_node, PubSubx, :publish, [pubsub, topic, payload, publish_opts])
+    end)
+
+    attempted_nodes =
+      remote_nodes ++
+        if include_local?, do: [current_node], else: []
+
+    summary = %{
+      attempted_nodes: attempted_nodes,
+      local?: include_local?,
+      remote_count: length(remote_nodes)
+    }
+
+    :telemetry.execute(
+      [:pub_subx, :distribute, :publish],
+      %{attempted_count: length(attempted_nodes), remote_count: length(remote_nodes)},
+      %{
+        pubsub: pubsub,
+        topic: topic,
+        attempted_nodes: attempted_nodes,
+        local?: summary.local?
+      }
+    )
+
+    summary
   end
 end
