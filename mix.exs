@@ -8,7 +8,7 @@ defmodule PubSubx.MixProject do
       elixir: "~> 1.12",
       start_permanent: Mix.env() == :prod,
       description:
-        "A lightweight and efficient PubSub library for Elixir, built on top of GenServer and Registry, providing robust pubsub functionalities for real-time messaging and event handling.",
+        "A lightweight event router for Elixir with hierarchical topics, filtering, and observable delivery.",
       package: package(),
       deps: deps(),
       aliases: aliases(),
@@ -32,6 +32,7 @@ defmodule PubSubx.MixProject do
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
+      {:telemetry, "~> 1.0"},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.0", only: [:dev], runtime: false},
       {:ex_doc, ">= 0.0.0", only: :dev, runtime: false}
@@ -56,7 +57,7 @@ defmodule PubSubx.MixProject do
       licenses: ["MIT"],
       links: %{github: "https://github.com/sonic182/pub_subx"},
       description:
-        "A lightweight and efficient PubSub library for Elixir, built on top of GenServer and Registry, providing robust pubsub functionalities for real-time messaging and event handling."
+        "A lightweight event router for Elixir with hierarchical topics, filtering, and observable delivery."
     ]
   end
 end

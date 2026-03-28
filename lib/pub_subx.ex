@@ -1,102 +1,48 @@
 defmodule PubSubx do
   @moduledoc """
-  `PubSubx` is a simple publish-subscribe (PubSub) system built on top of Elixir's `GenServer` and `Registry`.
+  `PubSubx` is a lightweight event router for Elixir applications.
 
-  The module allows processes to subscribe to topics, publish messages to those topics, and manage subscriptions. It efficiently handles message delivery to subscribed processes and automatically cleans up subscriptions when processes terminate.
+  It is designed for routing structured events through exact or hierarchical
+  topic subscriptions, optional subscriber-side filters, and Telemetry hooks.
 
-  ## Features
+  Subscribers receive `%PubSubx.Event{}` envelopes instead of raw payloads.
 
-  - **Subscribe/Unsubscribe:** Processes can subscribe or unsubscribe from topics.
-  - **Publish:** Messages can be published to a topic, and all subscribers to that topic will receive the message.
-  - **Dynamic Topics:** Topics are dynamically created as they are subscribed to, and they are removed when no subscribers exist.
-  - **Process Monitoring:** Automatically removes subscribers when the process is no longer alive.
+  ## Example
 
-  ## Auto module
+      {:ok, pubsub} = PubSubx.start_link(name: :my_pubsub)
+      :ok = PubSubx.subscribe(pubsub, "orders.*", self())
+      :ok = PubSubx.publish(pubsub, "orders.created", %{id: 1})
 
-  `PubSubx.Auto` module is an utility mod that helps developers to use less code for your PubSubx module definition.
-
-  ## Example Usage with Auto mod
-
-  Define an PubSubx module
-
-  ```elixir
-  defmodule MyApp.MyPubSub do
-    use PubSubx.Auto, name: MyPubSub
-  end
-  ```
-
-  Include it in your supervisor tree
-
-  ```elixir
-  defmodule MyApp.Application do
-    use Application
-
-    def start(_type, _args) do
-      children = [
-        # Start the PubSubx server
-        {MyApp.MyPubSub, []}
-      ]
-
-      opts = [strategy: :one_for_one, name: MyApp.Supervisor]
-      Supervisor.start_link(children, opts)
-    end
-  end
-  ```
-
-  Now you can use the MyPubSub module: 
-
-  ```elixir
-  # if you didn't use supervisor tree, you can start it as follow
-  {:ok, _pid} = MyApp.MyPubSub.start_link()
-
-  # subscribe a pid (eg: self()) to a topic
-  MyApp.MyPubSub.subscribe(:my_topic, self())
-
-  # list subscribers
-  subscribers = MyApp.MyPubSub.subscribers(:my_topic)
-
-  # list topics
-  topics = MyApp.MyPubSub.topics()
-
-  # publish a message
-  MyApp.MyPubSub.publish(:my_topic, "Hello, world!")
-
-  # Unsubscribe a process from a topic
-  # This is optional. This happens automatically if the subscribed process dies.
-  MyApp.MyPubSub.unsubscribe(:my_topic, self())
-  ```
-
-  ## Distributed Publish
-
-  You can check `PubSubx.Utils` for distribute_publish example, when having erlang/elixir nodes interconnected (eg: with libcluster)
-
-  ## Example Usage
-
-  Start the PubSubx server:
-
-      {:ok, pid} = PubSubx.start_link(name: :my_pubsub)
-
-  Subscribe a process to a topic:
-
-      PubSubx.subscribe(:my_topic, self(), :my_pubsub)
-
-  Publish a message to the topic:
-
-      PubSubx.publish(:my_topic, "Hello, subscribers!", :my_pubsub)
-
-  Get the list of subscribers:
-
-      subscribers = PubSubx.subscribers(:my_topic, :my_pubsub)
-
-  Unsubscribe a process from a topic:
-
-      PubSubx.unsubscribe(:my_topic, self(), :my_pubsub)
+      assert_receive %PubSubx.Event{
+        topic: "orders.created",
+        payload: %{id: 1}
+      }
   """
 
   use GenServer
 
+  alias PubSubx.Event
+
   @type topic :: atom | binary
   @type process :: atom | pid
+  @type filter_fun :: (Event.t() -> boolean())
+  @type publish_opts :: [
+          timestamp: DateTime.t(),
+          metadata: map(),
+          correlation_id: term(),
+          trace_id: term()
+        ]
+  @type subscribe_opts :: [filter: filter_fun()]
+
+  @telemetry_prefix [:pub_subx]
+
+  @typedoc false
+  @type subscription :: %{
+          pid: pid(),
+          topic_pattern: topic(),
+          filter: filter_fun() | nil,
+          match_type: :exact | :wildcard
+        }
 
   @doc """
   Starts the `PubSubx` server.
@@ -104,8 +50,8 @@ defmodule PubSubx do
   ## Options
 
     - `:name` - The name to register the `GenServer` under (default: `PubSubx`).
-    - `:registry_name` - Option to possible change the inner registry name.
-    - `:registry_partitions` - Option to possible change the inner registry partitions, default: `System.schedulers_online()`
+    - `:registry_name` - Backwards-compatible option retained from earlier versions.
+    - `:registry_partitions` - Backwards-compatible option retained from earlier versions.
   """
   @spec start_link(Keyword.t()) :: GenServer.on_start()
   def start_link(opts \\ []) do
@@ -124,103 +70,180 @@ defmodule PubSubx do
     ]
 
     state = %{
-      registry: get_registry(registry_opts),
+      exact_subscriptions: %{},
+      wildcard_subscriptions: %{},
+      subscriber_patterns: %{},
       monitors: %{},
-      subscriber_topics: %{},
-      topic_subscribers: %{}
+      pubsub: name,
+      registry: get_registry(registry_opts)
     }
 
     {:ok, state}
   end
 
   @doc """
-  Subscribes a given process (`pid`) to a specific `topic`.
+  Subscribes `pid` to a topic or topic pattern.
+
+  Re-subscribing the same `{pid, topic_pattern}` replaces the subscription options.
   """
-  @spec subscribe(process, topic, process) :: :ok
-  def subscribe(pubsub, topic, pid) do
-    GenServer.call(pubsub, {:subscribe, {topic, pid}})
+  @spec subscribe(process(), topic(), process()) :: :ok
+  def subscribe(pubsub, topic_pattern, pid) do
+    subscribe(pubsub, topic_pattern, pid, [])
   end
 
   @doc """
-  Returns a list of PIDs that are subscribed to the specified `topic`.
+  Subscribes `pid` to a topic or topic pattern with options.
+
+  Supported options:
+
+    - `:filter` - A predicate that receives `%PubSubx.Event{}` and returns `true`
+      when the subscriber should receive the event.
   """
-  @spec subscribers(process, topic) :: [pid]
-  def subscribers(process, topic) do
-    GenServer.call(process, {:subscribers, topic})
+  @spec subscribe(process(), topic(), process(), subscribe_opts()) :: :ok
+  def subscribe(pubsub, topic_pattern, pid, opts) do
+    GenServer.call(pubsub, {:subscribe, topic_pattern, pid, opts})
   end
 
   @doc """
-  Lists all topics that have active subscribers.
+  Returns the subscribers registered for the exact topic or topic pattern.
   """
-  @spec topics(process) :: [topic]
-  def topics(process) do
-    GenServer.call(process, :topics)
+  @spec subscribers(process(), topic()) :: [pid()]
+  def subscribers(pubsub, topic_pattern) do
+    GenServer.call(pubsub, {:subscribers, topic_pattern})
   end
 
   @doc """
-  Publishes a message to the specified `topic`.
-
-  All subscribers to that `topic` will receive the `message`.
+  Lists all active topic keys and wildcard patterns.
   """
-  @spec publish(process, topic, term()) :: :ok
-  def publish(process, topic, message) do
-    GenServer.cast(process, {:publish, {topic, message}})
+  @spec topics(process()) :: [topic()]
+  def topics(pubsub) do
+    GenServer.call(pubsub, :topics)
   end
 
   @doc """
-  Unsubscribes a given process (`pid`) from the specified `topic`.
+  Publishes a payload to the specified topic.
   """
-  @spec unsubscribe(process, topic, process) :: :ok
-  def unsubscribe(process, topic, pid) do
-    GenServer.call(process, {:unsubscribe, {topic, pid}})
+  @spec publish(process(), topic(), term()) :: :ok
+  def publish(pubsub, topic, payload) do
+    publish(pubsub, topic, payload, [])
+  end
+
+  @doc """
+  Publishes a payload to the specified topic with envelope options.
+
+  Supported options:
+
+    - `:timestamp`
+    - `:metadata`
+    - `:correlation_id`
+    - `:trace_id`
+  """
+  @spec publish(process(), topic(), term(), publish_opts()) :: :ok
+  def publish(pubsub, topic, payload, opts) do
+    GenServer.cast(pubsub, {:publish, topic, payload, opts})
+  end
+
+  @doc """
+  Unsubscribes `pid` from the specified topic or topic pattern.
+  """
+  @spec unsubscribe(process(), topic(), process()) :: :ok
+  def unsubscribe(pubsub, topic_pattern, pid) do
+    GenServer.call(pubsub, {:unsubscribe, topic_pattern, pid})
   end
 
   @impl true
   @spec handle_cast(term(), map()) :: {:noreply, map()}
-  def handle_cast({:publish, {topic, message}}, state) do
-    state
-    |> Map.get(:topic_subscribers)
-    |> Map.get(topic, MapSet.new())
-    |> Enum.each(&send(&1, message))
+  def handle_cast({:publish, topic, payload, opts}, state) do
+    event = build_event(topic, payload, opts)
+    deliveries = matching_deliveries(state, event)
+
+    Enum.each(deliveries, fn {pid, delivered_event} ->
+      send(pid, delivered_event)
+
+      emit_telemetry(
+        [:delivery],
+        %{count: 1},
+        %{
+          pubsub: state.pubsub,
+          pid: pid,
+          topic: delivered_event.topic,
+          correlation_id: delivered_event.correlation_id,
+          trace_id: delivered_event.trace_id
+        }
+      )
+    end)
+
+    emit_telemetry(
+      [:publish],
+      %{count: 1},
+      %{
+        pubsub: state.pubsub,
+        topic: event.topic,
+        correlation_id: event.correlation_id,
+        trace_id: event.trace_id,
+        matched_subscribers: map_size(deliveries)
+      }
+    )
+
+    if map_size(deliveries) == 0 do
+      emit_drop(state.pubsub, event, :no_subscribers)
+    end
 
     {:noreply, state}
   end
 
   @impl true
-  @spec handle_call(term(), {pid(), atom}, map()) :: {:reply, term(), map()}
-  def handle_call({:subscribe, {topic, pid}}, _from, state) do
+  @spec handle_call(term(), {pid(), atom()}, map()) :: {:reply, term(), map()}
+  def handle_call({:subscribe, topic_pattern, pid, opts}, _from, state) do
     process = get_process(pid)
+    subscription = build_subscription(topic_pattern, process, opts)
+    state = put_subscription(state, subscription)
 
-    if subscribed?(state, topic, process) do
-      {:reply, :ok, state}
-    else
-      {:ok, _} = Registry.register(state.registry, topic, target: process)
-      {:reply, :ok, subscribe_process(state, topic, process)}
-    end
+    emit_telemetry(
+      [:subscribe],
+      %{count: 1},
+      %{
+        pubsub: state.pubsub,
+        pid: process,
+        topic_pattern: topic_pattern
+      }
+    )
+
+    emit_subscriber_count(state, topic_pattern)
+
+    {:reply, :ok, state}
   end
 
-  def handle_call({:unsubscribe, {topic, pid}}, _from, state) do
+  def handle_call({:unsubscribe, topic_pattern, pid}, _from, state) do
     process = get_process(pid)
+    {state, removed?} = delete_subscription(state, topic_pattern, process)
 
-    if subscribed?(state, topic, process) do
-      :ok = unregister(state.registry, topic, process)
-      {:reply, :ok, unsubscribe_process(state, topic, process)}
-    else
-      {:reply, :ok, state}
+    if removed? do
+      emit_telemetry(
+        [:unsubscribe],
+        %{count: 1},
+        %{
+          pubsub: state.pubsub,
+          pid: process,
+          topic_pattern: topic_pattern
+        }
+      )
+
+      emit_subscriber_count(state, topic_pattern)
     end
+
+    {:reply, :ok, state}
   end
 
   def handle_call(:topics, _from, state) do
-    topics = get_topics(state)
-    {:reply, topics, state}
+    {:reply, get_topics(state), state}
   end
 
-  def handle_call({:subscribers, topic}, _from, state) do
+  def handle_call({:subscribers, topic_pattern}, _from, state) do
     subscribers =
       state
-      |> Map.get(:topic_subscribers)
-      |> Map.get(topic, MapSet.new())
-      |> Enum.to_list()
+      |> subscriptions_for(topic_pattern)
+      |> Map.keys()
 
     {:reply, subscribers, state}
   end
@@ -230,14 +253,13 @@ defmodule PubSubx do
   def handle_info({:DOWN, ref, :process, pid, _reason}, state) do
     case Map.get(state.monitors, pid) do
       ^ref ->
-        subscriber_topics = Map.get(state, :subscriber_topics)
-
         state =
-          subscriber_topics
+          state
+          |> Map.get(:subscriber_patterns)
           |> Map.get(pid, MapSet.new())
-          |> Enum.reduce(state, fn topic, acc ->
-            :ok = unregister(acc.registry, topic, pid)
-            drop_subscription(acc, topic, pid)
+          |> Enum.reduce(state, fn topic_pattern, acc ->
+            {next_state, _removed?} = delete_subscription(acc, topic_pattern, pid)
+            next_state
           end)
           |> remove_monitor(pid)
 
@@ -249,37 +271,249 @@ defmodule PubSubx do
   end
 
   @doc false
-  @spec get_topics(map()) :: [topic]
-  defp get_topics(state), do: Map.keys(state.topic_subscribers)
-
-  @doc false
-  @spec unregister(atom, topic, pid) :: :ok
-  defp unregister(registry, topic, process),
-    do: Registry.unregister_match(registry, topic, target: process)
-
-  @doc false
-  @spec subscribe_process(map(), topic(), pid()) :: map()
-  defp subscribe_process(state, topic, pid) do
-    state
-    |> ensure_monitor(pid)
-    |> put_subscription(topic, pid)
+  @spec build_event(topic(), term(), publish_opts()) :: Event.t()
+  defp build_event(topic, payload, opts) do
+    %Event{
+      topic: topic,
+      payload: payload,
+      timestamp: Keyword.get_lazy(opts, :timestamp, &DateTime.utc_now/0),
+      metadata: Keyword.get(opts, :metadata, %{}),
+      correlation_id: Keyword.get(opts, :correlation_id),
+      trace_id: Keyword.get(opts, :trace_id)
+    }
   end
 
   @doc false
-  @spec unsubscribe_process(map(), topic(), pid()) :: map()
-  defp unsubscribe_process(state, topic, pid) do
-    state
-    |> drop_subscription(topic, pid)
-    |> maybe_remove_monitor(pid)
+  @spec build_subscription(topic(), pid(), subscribe_opts()) :: subscription()
+  defp build_subscription(topic_pattern, pid, opts) do
+    filter = Keyword.get(opts, :filter)
+
+    %{
+      pid: pid,
+      topic_pattern: topic_pattern,
+      filter: filter,
+      match_type: match_type(topic_pattern)
+    }
   end
 
   @doc false
-  @spec subscribed?(map(), topic(), pid()) :: boolean()
-  defp subscribed?(state, topic, pid) do
+  @spec matching_deliveries(map(), Event.t()) :: %{pid() => Event.t()}
+  defp matching_deliveries(state, event) do
+    candidates =
+      exact_matches(state, event.topic) ++
+        wildcard_matches(state, event.topic)
+
+    Enum.reduce(candidates, %{}, fn subscription, deliveries ->
+      evaluate_delivery(deliveries, subscription, event, state.pubsub)
+    end)
+  end
+
+  @doc false
+  @spec exact_matches(map(), topic()) :: [subscription()]
+  defp exact_matches(state, topic) do
     state
-    |> Map.get(:topic_subscribers)
-    |> Map.get(topic, MapSet.new())
-    |> MapSet.member?(pid)
+    |> Map.get(:exact_subscriptions)
+    |> Map.get(topic, %{})
+    |> Map.values()
+  end
+
+  @doc false
+  @spec wildcard_matches(map(), topic()) :: [subscription()]
+  defp wildcard_matches(state, topic) do
+    state
+    |> Map.get(:wildcard_subscriptions)
+    |> Enum.filter(fn {topic_pattern, _subscriptions} ->
+      matches_pattern?(topic_pattern, topic)
+    end)
+    |> Enum.flat_map(fn {_topic_pattern, subscriptions} ->
+      Map.values(subscriptions)
+    end)
+  end
+
+  @doc false
+  @spec evaluate_delivery(%{pid() => Event.t()}, subscription(), Event.t(), atom()) ::
+          %{pid() => Event.t()}
+  defp evaluate_delivery(deliveries, subscription, event, pubsub) do
+    cond do
+      Map.has_key?(deliveries, subscription.pid) ->
+        deliveries
+
+      filter_matches?(subscription.filter, event) ->
+        Map.put(deliveries, subscription.pid, event)
+
+      true ->
+        emit_drop(pubsub, event, :filter_rejected)
+        deliveries
+    end
+  end
+
+  @doc false
+  @spec filter_matches?(filter_fun() | nil, Event.t()) :: boolean()
+  defp filter_matches?(nil, _event), do: true
+  defp filter_matches?(filter, event), do: filter.(event)
+
+  @doc false
+  @spec matches_pattern?(topic(), topic()) :: boolean()
+  defp matches_pattern?(pattern, topic) when is_atom(pattern) or is_atom(topic),
+    do: pattern == topic
+
+  defp matches_pattern?(pattern, topic) when is_binary(pattern) and is_binary(topic) do
+    case parse_pattern(pattern) do
+      {:ok, pattern_segments} ->
+        match_segments(pattern_segments, String.split(topic, ".", trim: true))
+
+      :error ->
+        false
+    end
+  end
+
+  @doc false
+  @spec parse_pattern(binary()) :: {:ok, [binary()]} | :error
+  defp parse_pattern(pattern) do
+    segments = String.split(pattern, ".", trim: true)
+
+    cond do
+      segments == [] ->
+        :error
+
+      Enum.count(segments, &(&1 == "**")) > 1 ->
+        :error
+
+      "**" in segments and List.last(segments) != "**" ->
+        :error
+
+      true ->
+        {:ok, segments}
+    end
+  end
+
+  @doc false
+  @spec match_segments([binary()], [binary()]) :: boolean()
+  defp match_segments([], []), do: true
+  defp match_segments(["**"], _topic_segments), do: true
+  defp match_segments([], _topic_segments), do: false
+  defp match_segments(_pattern_segments, []), do: false
+
+  defp match_segments(["*" | pattern_tail], [_ | topic_tail]),
+    do: match_segments(pattern_tail, topic_tail)
+
+  defp match_segments([segment | pattern_tail], [segment | topic_tail]),
+    do: match_segments(pattern_tail, topic_tail)
+
+  defp match_segments(_pattern_segments, _topic_segments), do: false
+
+  @doc false
+  @spec get_topics(map()) :: [topic()]
+  defp get_topics(state) do
+    Map.keys(state.exact_subscriptions) ++ Map.keys(state.wildcard_subscriptions)
+  end
+
+  @doc false
+  @spec match_type(topic()) :: :exact | :wildcard
+  defp match_type(topic_pattern) when is_atom(topic_pattern), do: :exact
+
+  defp match_type(topic_pattern) when is_binary(topic_pattern) do
+    if String.contains?(topic_pattern, "*"), do: :wildcard, else: :exact
+  end
+
+  @doc false
+  @spec put_subscription(map(), subscription()) :: map()
+  defp put_subscription(state, subscription) do
+    state
+    |> ensure_monitor(subscription.pid)
+    |> put_subscription_in_index(subscription)
+    |> put_pattern_for_subscriber(subscription.pid, subscription.topic_pattern)
+  end
+
+  @doc false
+  @spec put_subscription_in_index(map(), subscription()) :: map()
+  defp put_subscription_in_index(state, subscription) do
+    index_key =
+      case subscription.match_type do
+        :exact -> :exact_subscriptions
+        :wildcard -> :wildcard_subscriptions
+      end
+
+    update_in(state, [index_key], fn index ->
+      subscriptions = Map.get(index, subscription.topic_pattern, %{})
+
+      Map.put(
+        index,
+        subscription.topic_pattern,
+        Map.put(subscriptions, subscription.pid, subscription)
+      )
+    end)
+  end
+
+  @doc false
+  @spec put_pattern_for_subscriber(map(), pid(), topic()) :: map()
+  defp put_pattern_for_subscriber(state, pid, topic_pattern) do
+    update_in(state, [:subscriber_patterns, pid], fn patterns ->
+      patterns
+      |> default_set()
+      |> MapSet.put(topic_pattern)
+    end)
+  end
+
+  @doc false
+  @spec delete_subscription(map(), topic(), pid()) :: {map(), boolean()}
+  defp delete_subscription(state, topic_pattern, pid) do
+    case pop_subscription(state, topic_pattern, pid) do
+      {nil, state} ->
+        {state, false}
+
+      {_subscription, state} ->
+        state =
+          state
+          |> drop_pattern_for_subscriber(pid, topic_pattern)
+          |> maybe_remove_monitor(pid)
+
+        {state, true}
+    end
+  end
+
+  @doc false
+  @spec pop_subscription(map(), topic(), pid()) :: {subscription() | nil, map()}
+  defp pop_subscription(state, topic_pattern, pid) do
+    index_key =
+      case match_type(topic_pattern) do
+        :exact -> :exact_subscriptions
+        :wildcard -> :wildcard_subscriptions
+      end
+
+    subscriptions = get_in(state, [Access.key(index_key), Access.key(topic_pattern)]) || %{}
+    {subscription, subscriptions} = Map.pop(subscriptions, pid)
+
+    next_state =
+      update_in(state, [index_key], fn index ->
+        cond do
+          subscription == nil ->
+            index
+
+          subscriptions == %{} ->
+            Map.delete(index, topic_pattern)
+
+          true ->
+            Map.put(index, topic_pattern, subscriptions)
+        end
+      end)
+
+    {subscription, next_state}
+  end
+
+  @doc false
+  @spec subscriptions_for(map(), topic()) :: %{optional(pid()) => subscription()}
+  defp subscriptions_for(state, topic_pattern) do
+    case match_type(topic_pattern) do
+      :exact -> Map.get(state.exact_subscriptions, topic_pattern, %{})
+      :wildcard -> Map.get(state.wildcard_subscriptions, topic_pattern, %{})
+    end
+  end
+
+  @doc false
+  @spec drop_pattern_for_subscriber(map(), pid(), topic()) :: map()
+  defp drop_pattern_for_subscriber(state, pid, topic_pattern) do
+    update_in(state, [:subscriber_patterns], &drop_from_index(&1, pid, topic_pattern))
   end
 
   @doc false
@@ -295,35 +529,11 @@ defmodule PubSubx do
   end
 
   @doc false
-  @spec put_subscription(map(), topic(), pid()) :: map()
-  defp put_subscription(state, topic, pid) do
-    state
-    |> update_in([:topic_subscribers, topic], fn subscribers ->
-      subscribers
-      |> default_set()
-      |> MapSet.put(pid)
-    end)
-    |> update_in([:subscriber_topics, pid], fn topics ->
-      topics
-      |> default_set()
-      |> MapSet.put(topic)
-    end)
-  end
-
-  @doc false
-  @spec drop_subscription(map(), topic(), pid()) :: map()
-  defp drop_subscription(state, topic, pid) do
-    state
-    |> update_in([:topic_subscribers], &drop_from_index(&1, topic, pid))
-    |> update_in([:subscriber_topics], &drop_from_index(&1, pid, topic))
-  end
-
-  @doc false
   @spec maybe_remove_monitor(map(), pid()) :: map()
   defp maybe_remove_monitor(state, pid) do
-    case Map.get(state.subscriber_topics, pid) do
+    case Map.get(state.subscriber_patterns, pid) do
       nil -> remove_monitor(state, pid)
-      _topics -> state
+      _patterns -> state
     end
   end
 
@@ -338,6 +548,41 @@ defmodule PubSubx do
         Process.demonitor(ref, [:flush])
         %{state | monitors: monitors}
     end
+  end
+
+  @doc false
+  @spec emit_subscriber_count(map(), topic()) :: :ok
+  defp emit_subscriber_count(state, topic_pattern) do
+    emit_telemetry(
+      [:subscriber_count],
+      %{subscriber_count: map_size(subscriptions_for(state, topic_pattern))},
+      %{
+        pubsub: state.pubsub,
+        topic_pattern: topic_pattern
+      }
+    )
+  end
+
+  @doc false
+  @spec emit_drop(atom(), Event.t(), atom()) :: :ok
+  defp emit_drop(pubsub, event, reason) do
+    emit_telemetry(
+      [:drop],
+      %{count: 1},
+      %{
+        pubsub: pubsub,
+        topic: event.topic,
+        correlation_id: event.correlation_id,
+        trace_id: event.trace_id,
+        reason: reason
+      }
+    )
+  end
+
+  @doc false
+  @spec emit_telemetry([atom()], map(), map()) :: :ok
+  defp emit_telemetry(event_name, measurements, metadata) do
+    :telemetry.execute(@telemetry_prefix ++ event_name, measurements, metadata)
   end
 
   @doc false
@@ -364,12 +609,12 @@ defmodule PubSubx do
   defp default_set(set), do: set
 
   @doc false
-  @spec get_process(process) :: pid
+  @spec get_process(process()) :: pid()
   defp get_process(pid) when is_atom(pid), do: Process.whereis(pid)
   defp get_process(pid), do: pid
 
   @doc false
-  @spec get_registry(keyword()) :: atom
+  @spec get_registry(keyword()) :: atom()
   defp get_registry(opts) do
     registry_opts =
       Keyword.merge(
@@ -379,13 +624,12 @@ defmodule PubSubx do
         opts
       )
 
-    {:ok, _registry} =
-      Registry.start_link(registry_opts)
+    {:ok, _registry} = Registry.start_link(registry_opts)
 
     Keyword.get(registry_opts, :name)
   end
 
   @doc false
-  @spec get_name(Keyword.t()) :: atom
+  @spec get_name(Keyword.t()) :: atom()
   defp get_name(opts), do: Keyword.get(opts, :name, __MODULE__)
 end
