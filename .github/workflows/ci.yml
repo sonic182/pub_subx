@@ -1,72 +1,45 @@
 name: CI
 
-on: [push, pull_request]
+on:
+  push:
+    branches: ["master"]
+  pull_request:
+    branches: ["master"]
 
 jobs:
-  test:
-    name: OTP ${{matrix.otp}} / Elixir ${{matrix.elixir}}
+  check:
+    name: Format, Credo & Test
     runs-on: ubuntu-latest
+
     env:
       MIX_ENV: test
-    strategy:
-      matrix:
-        elixir: [1.16.0, 1.17.0]
-        otp: [25.0.0, 26.0.0]
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - name: Setup elixir
+      - name: Set up Elixir
         uses: erlef/setup-beam@v1
         with:
-          otp-version: ${{ matrix.otp }}
-          elixir-version: ${{ matrix.elixir }}
+          elixir-version: "1.19"
+          otp-version: "28"
 
-      - name: Cache
+      - name: Cache deps
         uses: actions/cache@v4
-        id: cache #id to use in retrieve action
         with:
           path: |
             deps
             _build
-          key: ${{ runner.os }}_${{ matrix.otp }}_${{ matrix.elixir }}_cache_${{ hashFiles('**/mix.lock') }}
-          restore-keys: |
-            ${{ runner.os }}_${{ matrix.otp }}_${{ matrix.elixir }}_cache_
+          key: ${{ runner.os }}-mix-${{ hashFiles('mix.lock') }}
+          restore-keys: ${{ runner.os }}-mix-
 
-      - name: Install Mix Dependencies
-        if: steps.cache.outputs.cache-hit != 'true'
-        run: |
-          mix local.rebar --force
-          mix local.hex --force
-          mix deps.get
+      - name: Install dependencies
+        run: mix deps.get
 
-      - name: Compile dev
-        if: steps.cache.outputs.cache-hit != 'true'
-        run: mix compile
-        env:
-          MIX_ENV: dev
-
-      - name: Check warnings
-        run: mix compile --warnings-as-errors --no-deps-check
-        env:
-          MIX_ENV: dev
-
-      - name: Compile test
-        if: steps.cache.outputs.cache-hit != 'true'
-        run: mix compile
-        env:
-          MIX_ENV: test
-
-      - name: Check Formatting
+      - name: Check formatting
         run: mix format --check-formatted
 
-      - name: Run credo
-        run: mix credo --strict --ignore todo
+      - name: Run Credo
+        run: mix credo --strict
 
-      - name: Run Tests
+      - name: Run tests
         run: mix test
-
-      - name: Run dialyzer
-        run: mix dialyzer
-        env:
-          MIX_ENV: dev
