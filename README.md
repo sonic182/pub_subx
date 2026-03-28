@@ -198,19 +198,19 @@ ports), Intel Core i5-7360U 2.30 GHz, 4 cores, 8 GB RAM:
 
 ```text
 Name                                   ips        average
-pub_subx exact publish           1052.15 K        0.95 μs
-pub_subx wildcard publish         880.92 K        1.14 μs
-phoenix_pubsub exact publish      412.43 K        2.42 μs
-registry exact dispatch           360.22 K        2.78 μs
+pub_subx exact publish            917.28 K        1.09 μs
+pub_subx wildcard publish         834.32 K        1.20 μs
+registry exact dispatch           459.20 K        2.18 μs
+phoenix_pubsub exact publish      266.79 K        3.75 μs
 ```
 
 Relative to this run:
 
-- `pub_subx exact publish` was `155.11%` faster than `phoenix_pubsub exact publish`
-- `pub_subx exact publish` was `192.09%` faster than `registry exact dispatch`
-- `pub_subx wildcard publish` was `113.59%` faster than `phoenix_pubsub exact publish`
-- `pub_subx wildcard publish` was `144.55%` faster than `registry exact dispatch`
-- `pub_subx wildcard publish` was `16.27%` slower than `pub_subx exact publish`
+- `pub_subx exact publish` was `243.82%` faster than `phoenix_pubsub exact publish`
+- `pub_subx exact publish` was `99.76%` faster than `registry exact dispatch`
+- `pub_subx wildcard publish` was `212.73%` faster than `phoenix_pubsub exact publish`
+- `pub_subx wildcard publish` was `81.69%` faster than `registry exact dispatch`
+- `pub_subx wildcard publish` was `9.94%` slower than `pub_subx exact publish`
 
 This example is illustrative only. Benchmark results will vary with CPU,
 Elixir/Erlang versions, scheduler behavior, and system load.
