@@ -124,7 +124,10 @@ defmodule PubSubx do
     ]
 
     state = %{
-      registry: get_registry(registry_opts)
+      registry: get_registry(registry_opts),
+      monitors: %{},
+      subscriber_topics: %{},
+      topic_subscribers: %{}
     }
 
     {:ok, state}
@@ -175,9 +178,10 @@ defmodule PubSubx do
   @impl true
   @spec handle_cast(term(), map()) :: {:noreply, map()}
   def handle_cast({:publish, {topic, message}}, state) do
-    Registry.dispatch(state.registry, topic, fn entries ->
-      for {_self, [target: target]} <- entries, do: send(target, message)
-    end)
+    state
+    |> Map.get(:topic_subscribers)
+    |> Map.get(topic, MapSet.new())
+    |> Enum.each(&send(&1, message))
 
     {:noreply, state}
   end
@@ -185,50 +189,179 @@ defmodule PubSubx do
   @impl true
   @spec handle_call(term(), {pid(), atom}, map()) :: {:reply, term(), map()}
   def handle_call({:subscribe, {topic, pid}}, _from, state) do
-    Process.monitor(pid)
     process = get_process(pid)
-    {:ok, _} = Registry.register(state.registry, topic, target: process)
-    {:reply, :ok, state}
+
+    if subscribed?(state, topic, process) do
+      {:reply, :ok, state}
+    else
+      {:ok, _} = Registry.register(state.registry, topic, target: process)
+      {:reply, :ok, subscribe_process(state, topic, process)}
+    end
   end
 
   def handle_call({:unsubscribe, {topic, pid}}, _from, state) do
     process = get_process(pid)
-    :ok = unregister(state.registry, topic, process)
-    {:reply, :ok, state}
+
+    if subscribed?(state, topic, process) do
+      :ok = unregister(state.registry, topic, process)
+      {:reply, :ok, unsubscribe_process(state, topic, process)}
+    else
+      {:reply, :ok, state}
+    end
   end
 
   def handle_call(:topics, _from, state) do
-    topics = get_topics(state.registry)
+    topics = get_topics(state)
     {:reply, topics, state}
   end
 
   def handle_call({:subscribers, topic}, _from, state) do
     subscribers =
-      state.registry
-      |> Registry.values(topic, self())
-      |> Enum.map(fn [target: pid] -> pid end)
+      state
+      |> Map.get(:topic_subscribers)
+      |> Map.get(topic, MapSet.new())
+      |> Enum.to_list()
 
     {:reply, subscribers, state}
   end
 
   @impl true
   @spec handle_info(term(), map()) :: {:noreply, map()}
-  def handle_info({:DOWN, _ref, :process, pid, _reason}, state) do
-    state.registry
-    |> get_topics()
-    |> Enum.each(&unregister(state.registry, &1, pid))
+  def handle_info({:DOWN, ref, :process, pid, _reason}, state) do
+    case Map.get(state.monitors, pid) do
+      ^ref ->
+        subscriber_topics = Map.get(state, :subscriber_topics)
 
-    {:noreply, state}
+        state =
+          subscriber_topics
+          |> Map.get(pid, MapSet.new())
+          |> Enum.reduce(state, fn topic, acc ->
+            :ok = unregister(acc.registry, topic, pid)
+            drop_subscription(acc, topic, pid)
+          end)
+          |> remove_monitor(pid)
+
+        {:noreply, state}
+
+      _other ->
+        {:noreply, state}
+    end
   end
 
   @doc false
-  @spec get_topics(atom) :: [topic]
-  defp get_topics(registry), do: Registry.keys(registry, self())
+  @spec get_topics(map()) :: [topic]
+  defp get_topics(state), do: Map.keys(state.topic_subscribers)
 
   @doc false
   @spec unregister(atom, topic, pid) :: :ok
   defp unregister(registry, topic, process),
     do: Registry.unregister_match(registry, topic, target: process)
+
+  @doc false
+  @spec subscribe_process(map(), topic(), pid()) :: map()
+  defp subscribe_process(state, topic, pid) do
+    state
+    |> ensure_monitor(pid)
+    |> put_subscription(topic, pid)
+  end
+
+  @doc false
+  @spec unsubscribe_process(map(), topic(), pid()) :: map()
+  defp unsubscribe_process(state, topic, pid) do
+    state
+    |> drop_subscription(topic, pid)
+    |> maybe_remove_monitor(pid)
+  end
+
+  @doc false
+  @spec subscribed?(map(), topic(), pid()) :: boolean()
+  defp subscribed?(state, topic, pid) do
+    state
+    |> Map.get(:topic_subscribers)
+    |> Map.get(topic, MapSet.new())
+    |> MapSet.member?(pid)
+  end
+
+  @doc false
+  @spec ensure_monitor(map(), pid()) :: map()
+  defp ensure_monitor(state, pid) do
+    case Map.get(state.monitors, pid) do
+      nil ->
+        put_in(state.monitors[pid], Process.monitor(pid))
+
+      _ref ->
+        state
+    end
+  end
+
+  @doc false
+  @spec put_subscription(map(), topic(), pid()) :: map()
+  defp put_subscription(state, topic, pid) do
+    state
+    |> update_in([:topic_subscribers, topic], fn subscribers ->
+      subscribers
+      |> default_set()
+      |> MapSet.put(pid)
+    end)
+    |> update_in([:subscriber_topics, pid], fn topics ->
+      topics
+      |> default_set()
+      |> MapSet.put(topic)
+    end)
+  end
+
+  @doc false
+  @spec drop_subscription(map(), topic(), pid()) :: map()
+  defp drop_subscription(state, topic, pid) do
+    state
+    |> update_in([:topic_subscribers], &drop_from_index(&1, topic, pid))
+    |> update_in([:subscriber_topics], &drop_from_index(&1, pid, topic))
+  end
+
+  @doc false
+  @spec maybe_remove_monitor(map(), pid()) :: map()
+  defp maybe_remove_monitor(state, pid) do
+    case Map.get(state.subscriber_topics, pid) do
+      nil -> remove_monitor(state, pid)
+      _topics -> state
+    end
+  end
+
+  @doc false
+  @spec remove_monitor(map(), pid()) :: map()
+  defp remove_monitor(state, pid) do
+    case Map.pop(state.monitors, pid) do
+      {nil, _monitors} ->
+        state
+
+      {ref, monitors} ->
+        Process.demonitor(ref, [:flush])
+        %{state | monitors: monitors}
+    end
+  end
+
+  @doc false
+  @spec drop_from_index(map(), term(), term()) :: map()
+  defp drop_from_index(index, key, value) do
+    case Map.get(index, key) do
+      nil ->
+        index
+
+      entries ->
+        entries = MapSet.delete(entries, value)
+
+        if MapSet.size(entries) == 0 do
+          Map.delete(index, key)
+        else
+          Map.put(index, key, entries)
+        end
+    end
+  end
+
+  @doc false
+  @spec default_set(MapSet.t() | nil) :: MapSet.t()
+  defp default_set(nil), do: MapSet.new()
+  defp default_set(set), do: set
 
   @doc false
   @spec get_process(process) :: pid

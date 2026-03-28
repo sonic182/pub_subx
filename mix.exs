@@ -11,6 +11,7 @@ defmodule PubSubx.MixProject do
         "A lightweight and efficient PubSub library for Elixir, built on top of GenServer and Registry, providing robust pubsub functionalities for real-time messaging and event handling.",
       package: package(),
       deps: deps(),
+      aliases: aliases(),
       docs: [
         main: "PubSubx",
         extras: ["README.md", "CHANGELOG.md"],
@@ -34,6 +35,18 @@ defmodule PubSubx.MixProject do
       {:credo, "~> 1.6", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.0", only: [:dev], runtime: false},
       {:ex_doc, ">= 0.0.0", only: :dev, runtime: false}
+    ]
+  end
+
+  defp aliases do
+    [
+      precommit: [
+        "compile --warnings-as-errors",
+        "deps.unlock --unused",
+        "format",
+        "credo --strict",
+        "cmd env MIX_ENV=test mix test"
+      ]
     ]
   end
 
