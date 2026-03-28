@@ -15,8 +15,8 @@ envelopes, and Telemetry hooks.
 - Receive `%PubSubx.Event{}` envelopes with topic, payload, timestamp, metadata,
   correlation ID, and trace ID.
 - Filter events at the subscriber so a broad subscription can still be selective.
-- Observe subscribe, unsubscribe, publish, delivery, drop, and subscriber-count
-  events through Telemetry.
+- Observe subscribe, unsubscribe, publish, delivery, drop, distributed publish,
+  and subscriber-count events through Telemetry.
 
 ## Installation
 
@@ -30,6 +30,14 @@ def deps do
   ]
 end
 ```
+
+## API conventions
+
+The public API keeps the same argument order throughout:
+
+- `subscribe(pubsub, topic_pattern, pid, opts \\ [])`
+- `publish(pubsub, topic, payload, opts \\ [])`
+- `unsubscribe(pubsub, topic_pattern, pid)`
 
 ## Usage
 
@@ -60,6 +68,18 @@ end
 - `*` matches one segment.
 - `**` matches zero or more trailing segments and must be the last segment.
 
+## Distributed publish
+
+`PubSubx.Utils.distribute_publish/4` provides best-effort cross-node fanout.
+It can include the local node, forwards publish options, and emits
+`[:pub_subx, :distribute, :publish]`.
+
+It does not:
+
+- synchronize subscriptions across nodes
+- wait for acknowledgements
+- retry failed remote deliveries
+
 ## Telemetry
 
 `PubSubx` emits the following Telemetry events:
@@ -70,6 +90,29 @@ end
 - `[:pub_subx, :delivery]`
 - `[:pub_subx, :drop]`
 - `[:pub_subx, :subscriber_count]`
+- `[:pub_subx, :distribute, :publish]`
+
+## Benchmarks
+
+Benchmark scaffolding lives in [`bench/pub_subx_bench.exs`](bench/pub_subx_bench.exs)
+and compares:
+
+- `PubSubx` exact publish
+- `PubSubx` wildcard publish
+- `Phoenix.PubSub` exact publish
+- plain `Registry` exact dispatch
+
+Run it with:
+
+```bash
+mix run bench/pub_subx_bench.exs
+```
+
+## Future direction
+
+If repeated event schemas emerge across multiple users of the library, a later
+release can add typed event helpers or macros on top of the current event
+envelope. That is intentionally deferred for now.
 
 The docs can be found at <https://hexdocs.pm/pub_subx>.
 

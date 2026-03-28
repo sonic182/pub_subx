@@ -33,6 +33,8 @@ defmodule PubSubx.MixProject do
   defp deps do
     [
       {:telemetry, "~> 1.0"},
+      {:benchee, "~> 1.3", only: :dev, runtime: false},
+      {:phoenix_pubsub, "~> 2.1", only: :dev, runtime: false},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.0", only: [:dev], runtime: false},
       {:ex_doc, ">= 0.0.0", only: :dev, runtime: false}

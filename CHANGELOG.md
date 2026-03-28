@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+- Repositioned `pub_subx` as a lightweight event router focused on hierarchical topics, filtering, and observable delivery.
+- Deliver `%PubSubx.Event{}` envelopes to subscribers instead of raw published payloads.
+- Documented best-effort distributed publish semantics and clarified public API argument order.
+
+### Added
+- Hierarchical topic matching for binary subscriptions with `*` and `**`.
+- Subscriber-side filters through `subscribe/4`.
+- Envelope metadata support through `publish/4`.
+- Telemetry hooks for subscribe, unsubscribe, publish, delivery, drops, and subscriber counts.
+- Forwarding support for the new `subscribe/3` and `publish/3` option arities in `PubSubx.Auto`.
+- Telemetry-backed best-effort distributed publish summaries in `PubSubx.Utils`.
+- Benchmark scaffolding for `PubSubx`, `Phoenix.PubSub`, and `Registry`.
+
 ## [0.2.3] - 2024-09-01
 
 ### Fix

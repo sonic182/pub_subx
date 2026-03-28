@@ -2,10 +2,16 @@ defmodule PubSubx do
   @moduledoc """
   `PubSubx` is a lightweight event router for Elixir applications.
 
-  It is designed for routing structured events through exact or hierarchical
-  topic subscriptions, optional subscriber-side filters, and Telemetry hooks.
+  It routes structured events through exact or hierarchical topic subscriptions,
+  optional subscriber-side filters, and Telemetry hooks.
 
-  Subscribers receive `%PubSubx.Event{}` envelopes instead of raw payloads.
+  ## API Conventions
+
+  Public functions keep the same argument order:
+
+    - `subscribe(pubsub, topic_pattern, pid, opts \\\\ [])`
+    - `publish(pubsub, topic, payload, opts \\\\ [])`
+    - `unsubscribe(pubsub, topic_pattern, pid)`
 
   ## Example
 
