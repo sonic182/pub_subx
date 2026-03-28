@@ -80,6 +80,44 @@ defmodule PubSubxTest do
     refute_receive %Event{}
   end
 
+  test "filter errors do not crash the pubsub and emit drop telemetry", %{pubsub: pubsub} do
+    test_pid = self()
+
+    attach_many(
+      [
+        [:pub_subx, :drop]
+      ],
+      fn event_name, measurements, metadata, _config ->
+        send(test_pid, {:telemetry, event_name, measurements, metadata})
+      end
+    )
+
+    :ok =
+      PubSubx.subscribe(pubsub, "orders.*", self(), filter: fn _event -> raise "boom" end)
+
+    receiver =
+      spawn(fn ->
+        :ok = PubSubx.subscribe(pubsub, "orders.*", self())
+
+        receive do
+          event -> send(test_pid, {:receiver_event, event})
+        end
+      end)
+
+    assert eventually(fn ->
+             Enum.member?(PubSubx.subscribers(pubsub, "orders.*"), receiver)
+           end)
+
+    :ok = PubSubx.publish(pubsub, "orders.created", %{id: 1})
+
+    assert_receive {:receiver_event, %Event{topic: "orders.created", payload: %{id: 1}}}
+    assert_receive {:telemetry, [:pub_subx, :drop], %{count: 1}, %{reason: :filter_error}}
+
+    assert Process.alive?(pubsub)
+  after
+    detach_many()
+  end
+
   test "re-subscribing replaces the filter", %{pubsub: pubsub} do
     :ok =
       PubSubx.subscribe(pubsub, "orders.*", self(),
@@ -137,6 +175,45 @@ defmodule PubSubxTest do
            end)
   end
 
+  test "dead subscriber cleanup emits unsubscribe and subscriber_count telemetry", %{
+    pubsub: pubsub
+  } do
+    test_pid = self()
+
+    attach_many(
+      [
+        [:pub_subx, :unsubscribe],
+        [:pub_subx, :subscriber_count]
+      ],
+      fn event_name, measurements, metadata, _config ->
+        send(test_pid, {:telemetry, event_name, measurements, metadata})
+      end
+    )
+
+    pid =
+      spawn(fn ->
+        :ok = PubSubx.subscribe(pubsub, "orders.**", self())
+
+        receive do
+          :stop -> :ok
+        end
+      end)
+
+    assert eventually(fn ->
+             PubSubx.subscribers(pubsub, "orders.**") == [pid]
+           end)
+
+    send(pid, :stop)
+
+    assert_receive {:telemetry, [:pub_subx, :unsubscribe], %{count: 1},
+                    %{pid: ^pid, topic_pattern: "orders.**"}}
+
+    assert_receive {:telemetry, [:pub_subx, :subscriber_count], %{subscriber_count: 0},
+                    %{topic_pattern: "orders.**"}}
+  after
+    detach_many()
+  end
+
   test "telemetry emits subscribe, publish, delivery, drop, unsubscribe, and subscriber_count", %{
     pubsub: pubsub
   } do
@@ -170,6 +247,8 @@ defmodule PubSubxTest do
 
     assert_receive {:telemetry, [:pub_subx, :drop], %{count: 1}, %{reason: :filter_rejected}}
 
+    refute_receive {:telemetry, [:pub_subx, :drop], %{count: 1}, %{reason: :no_subscribers}}
+
     assert_receive {:telemetry, [:pub_subx, :publish], %{count: 1}, %{matched_subscribers: 0}}
 
     :ok = PubSubx.publish(pubsub, "orders.created", %{region: :eu})
@@ -184,6 +263,27 @@ defmodule PubSubxTest do
                     %{topic_pattern: "orders.*"}}
 
     assert_receive {:telemetry, [:pub_subx, :subscriber_count], %{subscriber_count: 0}, _metadata}
+  after
+    detach_many()
+  end
+
+  test "telemetry emits no_subscribers only when no subscription matches", %{pubsub: pubsub} do
+    test_pid = self()
+
+    attach_many(
+      [
+        [:pub_subx, :drop]
+      ],
+      fn event_name, measurements, metadata, _config ->
+        send(test_pid, {:telemetry, event_name, measurements, metadata})
+      end
+    )
+
+    :ok = PubSubx.publish(pubsub, "orders.created", %{id: 1})
+
+    assert_receive {:telemetry, [:pub_subx, :drop], %{count: 1}, %{reason: :no_subscribers}}
+    refute_receive {:telemetry, [:pub_subx, :drop], %{count: 1}, %{reason: :filter_rejected}}
+    refute_receive {:telemetry, [:pub_subx, :drop], %{count: 1}, %{reason: :filter_error}}
   after
     detach_many()
   end

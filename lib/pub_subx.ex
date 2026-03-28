@@ -161,7 +161,7 @@ defmodule PubSubx do
   @spec handle_cast(term(), map()) :: {:noreply, map()}
   def handle_cast({:publish, topic, payload, opts}, state) do
     event = build_event(topic, payload, opts)
-    deliveries = matching_deliveries(state, event)
+    %{deliveries: deliveries, matched?: matched?} = matching_deliveries(state, event)
 
     Enum.each(deliveries, fn {pid, delivered_event} ->
       send(pid, delivered_event)
@@ -191,7 +191,7 @@ defmodule PubSubx do
       }
     )
 
-    if map_size(deliveries) == 0 do
+    if not matched? do
       emit_drop(state.pubsub, event, :no_subscribers)
     end
 
@@ -263,10 +263,7 @@ defmodule PubSubx do
           state
           |> Map.get(:subscriber_patterns)
           |> Map.get(pid, MapSet.new())
-          |> Enum.reduce(state, fn topic_pattern, acc ->
-            {next_state, _removed?} = delete_subscription(acc, topic_pattern, pid)
-            next_state
-          end)
+          |> Enum.reduce(state, &cleanup_subscription(&2, &1, pid))
           |> remove_monitor(pid)
 
         {:noreply, state}
@@ -303,15 +300,24 @@ defmodule PubSubx do
   end
 
   @doc false
-  @spec matching_deliveries(map(), Event.t()) :: %{pid() => Event.t()}
+  @spec matching_deliveries(map(), Event.t()) :: %{
+          deliveries: %{pid() => Event.t()},
+          matched?: boolean()
+        }
   defp matching_deliveries(state, event) do
     candidates =
       exact_matches(state, event.topic) ++
         wildcard_matches(state, event.topic)
 
-    Enum.reduce(candidates, %{}, fn subscription, deliveries ->
-      evaluate_delivery(deliveries, subscription, event, state.pubsub)
-    end)
+    deliveries =
+      Enum.reduce(candidates, %{}, fn subscription, acc ->
+        evaluate_delivery(acc, subscription, event, state.pubsub)
+      end)
+
+    %{
+      deliveries: deliveries,
+      matched?: candidates != []
+    }
   end
 
   @doc false
@@ -340,23 +346,57 @@ defmodule PubSubx do
   @spec evaluate_delivery(%{pid() => Event.t()}, subscription(), Event.t(), atom()) ::
           %{pid() => Event.t()}
   defp evaluate_delivery(deliveries, subscription, event, pubsub) do
-    cond do
-      Map.has_key?(deliveries, subscription.pid) ->
-        deliveries
+    if Map.has_key?(deliveries, subscription.pid) do
+      deliveries
+    else
+      case filter_result(subscription.filter, event) do
+        :match ->
+          Map.put(deliveries, subscription.pid, event)
 
-      filter_matches?(subscription.filter, event) ->
-        Map.put(deliveries, subscription.pid, event)
+        :reject ->
+          emit_drop(pubsub, event, :filter_rejected)
+          deliveries
 
-      true ->
-        emit_drop(pubsub, event, :filter_rejected)
-        deliveries
+        :error ->
+          emit_drop(pubsub, event, :filter_error)
+          deliveries
+      end
     end
   end
 
   @doc false
-  @spec filter_matches?(filter_fun() | nil, Event.t()) :: boolean()
-  defp filter_matches?(nil, _event), do: true
-  defp filter_matches?(filter, event), do: filter.(event)
+  @spec filter_result(filter_fun() | nil, Event.t()) :: :match | :reject | :error
+  defp filter_result(nil, _event), do: :match
+
+  defp filter_result(filter, event) do
+    if filter.(event), do: :match, else: :reject
+  rescue
+    _error -> :error
+  catch
+    _kind, _value -> :error
+  end
+
+  @doc false
+  @spec cleanup_subscription(map(), topic(), pid()) :: map()
+  defp cleanup_subscription(state, topic_pattern, pid) do
+    {next_state, removed?} = delete_subscription(state, topic_pattern, pid)
+
+    if removed? do
+      emit_telemetry(
+        [:unsubscribe],
+        %{count: 1},
+        %{
+          pubsub: state.pubsub,
+          pid: pid,
+          topic_pattern: topic_pattern
+        }
+      )
+
+      emit_subscriber_count(next_state, topic_pattern)
+    end
+
+    next_state
+  end
 
   @doc false
   @spec matches_pattern?(topic(), topic()) :: boolean()
