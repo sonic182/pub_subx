@@ -2,9 +2,10 @@ defmodule PubSubx.Utils do
   @moduledoc """
   Best-effort utilities for working with `PubSubx` across connected Erlang nodes.
 
-  `PubSubx.Utils.distribute_publish/4` fans a publish call out to visible nodes,
-  optionally including the local node. It does not synchronize subscriptions
-  across nodes, wait for acknowledgements, or retry failed deliveries.
+  `PubSubx.Utils.distribute_publish/4` fans a publish call out to visible nodes
+  and includes the local node by default. Pass `include_local?: false` to
+  suppress local delivery. It does not synchronize subscriptions across nodes,
+  wait for acknowledgements, or retry failed deliveries.
   """
 
   @type distribute_opts :: [
@@ -24,7 +25,9 @@ defmodule PubSubx.Utils do
     - `:publish` - Keyword options forwarded to `PubSubx.publish/4`.
     - `:node_filter` - Predicate for selecting nodes.
     - `:node_opts` - Options passed to `Node.list/1`.
+      Defaults to `[:visible, :this]`.
     - `:include_local?` - Whether to publish to the current node as part of the fanout.
+      Defaults to `true`.
 
   ## Returns
 
@@ -44,8 +47,8 @@ defmodule PubSubx.Utils do
   def distribute_publish(pubsub, topic, payload, opts \\ []) do
     publish_opts = Keyword.get(opts, :publish, [])
     node_filter = Keyword.get(opts, :node_filter, fn _node -> true end)
-    node_opts = Keyword.get(opts, :node_opts, [:visible])
-    include_local? = Keyword.get(opts, :include_local?, false)
+    node_opts = Keyword.get(opts, :node_opts, [:visible, :this])
+    include_local? = Keyword.get(opts, :include_local?, true)
 
     current_node = node()
 
@@ -55,9 +58,8 @@ defmodule PubSubx.Utils do
       |> Enum.filter(node_filter)
 
     remote_nodes = Enum.reject(selected_nodes, &(&1 == current_node))
-    local_selected? = current_node in selected_nodes
 
-    if include_local? or local_selected? do
+    if include_local? do
       PubSubx.publish(pubsub, topic, payload, publish_opts)
     end
 
@@ -67,11 +69,11 @@ defmodule PubSubx.Utils do
 
     attempted_nodes =
       remote_nodes ++
-        if include_local? or local_selected?, do: [current_node], else: []
+        if include_local?, do: [current_node], else: []
 
     summary = %{
       attempted_nodes: attempted_nodes,
-      local?: include_local? or local_selected?,
+      local?: include_local?,
       remote_count: length(remote_nodes)
     }
 

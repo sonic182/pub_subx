@@ -41,14 +41,32 @@ The public API keeps the same argument order throughout:
 
 ## Usage
 
+### Add PubSubx to your supervision tree
+
+In your `application.ex`, start the PubSub server as part of your supervision
+tree:
+
 ```elixir
-{:ok, pubsub} = PubSubx.start_link(name: :my_pubsub)
+def start(_type, _args) do
+  children = [
+    {MyApp.MyPubSub, []}
+  ]
 
-PubSubx.subscribe(:my_pubsub, "orders.*", self(),
-  filter: fn event -> event.payload.region == :eu end
-)
+  opts = [strategy: :one_for_one, name: MyApp.Supervisor]
+  Supervisor.start_link(children, opts)
+end
+```
 
-PubSubx.publish(:my_pubsub, "orders.created", %{id: 1, region: :eu},
+### Basic subscribe and publish
+
+Subscriptions are automatically removed when the subscriber process exits, so
+explicit `unsubscribe/3` calls are only needed when you want to stop receiving
+events before the process terminates.
+
+```elixir
+:ok = MyApp.MyPubSub.subscribe("orders.created", self())
+
+:ok = MyApp.MyPubSub.publish("orders.created", %{id: 1},
   metadata: %{source: :checkout},
   correlation_id: "corr-123",
   trace_id: "trace-123"
@@ -58,6 +76,70 @@ receive do
   %PubSubx.Event{} = event ->
     IO.inspect(event.topic)
     IO.inspect(event.payload)
+end
+```
+
+### Subscribe with an optional filter
+
+The `:filter` option is optional. Use it only when a subscriber wants to accept
+just a subset of the events that match a topic pattern.
+
+As with exact subscriptions, the subscriber is automatically deregistered if
+its process exits.
+
+```elixir
+:ok =
+  MyApp.MyPubSub.subscribe("orders.*", self(),
+    filter: fn event -> event.payload.region == :eu end
+  )
+
+:ok =
+  MyApp.MyPubSub.publish("orders.created", %{id: 1, region: :eu},
+    metadata: %{source: :checkout},
+    correlation_id: "corr-123",
+    trace_id: "trace-123"
+  )
+
+receive do
+  %PubSubx.Event{} = event ->
+    IO.inspect(event.topic)
+    IO.inspect(event.payload)
+end
+```
+
+### Distributed publish across interconnected nodes
+
+If your Erlang nodes are already connected (eg: libcluster usage),
+`PubSubx.Utils.distribute_publish/4` can fan a publish out to all nodes or
+selected nodes. Local delivery and `node_opts: [:visible, :this]` are enabled
+by default; pass `include_local?: false` only when you want remote-only fanout.
+This is best-effort delivery; it does not synchronize subscriptions or wait for
+acknowledgements.
+It also relies on the PubSub `GenServer` being started in each application
+supervision tree under the same PubSub module name.
+
+```elixir
+:ok = MyApp.MyPubSub.subscribe("orders.created", self())
+
+summary =
+  PubSubx.Utils.distribute_publish(MyApp.MyPubSub, "orders.created", %{id: 1},
+    publish: [
+      metadata: %{source: :cluster},
+      correlation_id: "dist-123"
+    ]
+  )
+
+IO.inspect(summary.attempted_nodes)
+
+# Remote-only fanout:
+# PubSubx.Utils.distribute_publish(MyApp.MyPubSub, "orders.created", %{id: 1},
+#   include_local?: false
+# )
+
+receive do
+  %PubSubx.Event{} = event ->
+    IO.inspect(event.topic)
+    IO.inspect(event.metadata)
 end
 ```
 

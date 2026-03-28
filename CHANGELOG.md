@@ -20,6 +20,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - Telemetry-backed best-effort distributed publish summaries in `PubSubx.Utils`.
 - Benchmark scaffolding for `PubSubx`, `Phoenix.PubSub`, and `Registry`.
 
+### Changed
+- `PubSubx.Utils.distribute_publish/4` now delivers locally by default and only skips
+  the current node when `include_local?: false` is passed.
+
 ## [0.2.3] - 2024-09-01
 
 ### Fix

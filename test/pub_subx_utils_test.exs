@@ -11,7 +11,7 @@ defmodule PubSubx.UtilsTest do
     %{pubsub: pubsub}
   end
 
-  test "distribute_publish can include the local node and forwards publish opts", %{
+  test "distribute_publish includes the local node by default and forwards publish opts", %{
     pubsub: pubsub
   } do
     :ok = PubSubx.subscribe(pubsub, "orders.created", self())
@@ -29,9 +29,7 @@ defmodule PubSubx.UtilsTest do
 
     summary =
       Utils.distribute_publish(pubsub, "orders.created", %{id: 1},
-        publish: [metadata: %{source: :distributed}, correlation_id: "dist-1"],
-        include_local?: true,
-        node_opts: [:this]
+        publish: [metadata: %{source: :distributed}, correlation_id: "dist-1"]
       )
 
     assert summary.local?
@@ -54,13 +52,24 @@ defmodule PubSubx.UtilsTest do
     :telemetry.detach({__MODULE__, :distribute_publish, self()})
   end
 
-  test "distribute_publish respects node filters", %{pubsub: pubsub} do
+  test "distribute_publish keeps local delivery even when remote filters reject nodes", %{
+    pubsub: pubsub
+  } do
     summary =
       Utils.distribute_publish(pubsub, "orders.created", %{id: 1},
-        node_opts: [:this],
         node_filter: fn _node -> false end
       )
 
+    assert summary == %{attempted_nodes: [node()], local?: true, remote_count: 0}
+  end
+
+  test "distribute_publish can opt out of local delivery", %{pubsub: pubsub} do
+    :ok = PubSubx.subscribe(pubsub, "orders.created", self())
+
+    summary =
+      Utils.distribute_publish(pubsub, "orders.created", %{id: 1}, include_local?: false)
+
     assert summary == %{attempted_nodes: [], local?: false, remote_count: 0}
+    refute_receive %Event{}
   end
 end
