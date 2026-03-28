@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-03-28
+
 ### Changed
 - Repositioned `pub_subx` as a lightweight event router focused on hierarchical topics, filtering, and observable delivery.
 - Deliver `%PubSubx.Event{}` envelopes to subscribers instead of raw published payloads.

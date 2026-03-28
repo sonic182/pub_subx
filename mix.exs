@@ -4,7 +4,7 @@ defmodule PubSubx.MixProject do
   def project do
     [
       app: :pub_subx,
-      version: "0.2.3",
+      version: "1.0.0",
       elixir: "~> 1.15",
       start_permanent: Mix.env() == :prod,
       description:
