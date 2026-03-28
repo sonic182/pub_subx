@@ -108,6 +108,9 @@ Run it with:
 mix run bench/pub_subx_bench.exs
 ```
 
+The script starts the `phoenix_pubsub` application it needs before running the
+comparison, so the command above is the intended way to execute the benchmark.
+
 ## Future direction
 
 If repeated event schemas emerge across multiple users of the library, a later
