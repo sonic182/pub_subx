@@ -5,7 +5,7 @@ defmodule PubSubx.MixProject do
     [
       app: :pub_subx,
       version: "0.2.3",
-      elixir: "~> 1.12",
+      elixir: "~> 1.15",
       start_permanent: Mix.env() == :prod,
       description:
         "A lightweight event router for Elixir with hierarchical topics, filtering, and observable delivery.",
