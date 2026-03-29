@@ -139,10 +139,10 @@ defmodule PubSubx do
 
   Supported options:
 
-    - `:timestamp`
-    - `:metadata`
-    - `:correlation_id`
-    - `:trace_id`
+    - `:timestamp` - a `DateTime` for the event; defaults to `DateTime.utc_now/0`
+    - `:metadata` - a map of arbitrary key-value pairs attached to the event; defaults to `%{}`
+    - `:correlation_id` - an identifier used to correlate related events across services or workflows
+    - `:trace_id` - an identifier for tracing a request or operation across multiple events
   """
   @spec publish(process(), topic(), term(), publish_opts()) :: :ok
   def publish(pubsub, topic, payload, opts) do
